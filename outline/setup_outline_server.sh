@@ -7,7 +7,7 @@
 set -e
 
 # Variables
-OUTLINE_IMAGE="outline/shadowbox:latest"
+OUTLINE_IMAGE="docker.io/outline/shadowbox:latest"  # Updated to explicit registry
 OUTLINE_CONTAINER_NAME="outline-server"
 CONFIG_DIR="/opt/outline/config"
 ZIP_OUTPUT="outline_docker_bundle.zip"
@@ -15,7 +15,7 @@ DOCKER_PORT="8080"
 API_PORT="8081"
 CONFIG_FILE="${CONFIG_DIR}/shadowbox_config.json"
 DOCKER_VERSION="20.10.7"
-DOCKER_OFFLINE_DIR="/tmp/docker_offline"
+DOCKER_OFFLINE_DIRtmp/docker_offline"
 DOCKER_OFFLINE_TAR="docker_${DOCKER_VERSION}.tar.gz"
 
 # Step 1: Install Docker
@@ -31,7 +31,22 @@ sudo mkdir -p ${CONFIG_DIR}
 
 # Step 3: Pull and configure Outline Server
 echo "Pulling Outline Server Docker image..."
-sudo docker pull ${OUTLINE_IMAGE}
+if ! sudo docker pull ${OUTLINE_IMAGE}; then
+    echo "Error: Failed to pull ${OUTLINE_IMAGE}. Check if the image exists or requires authentication."
+    echo "Attempting to use Outline's official installation script to fetch image..."
+    # Fallback: Use Outline's official install script to get the image
+    wget https://raw.githubusercontent.com/Jigsaw-Code/outline-server/master/src/server_manager/install_scripts/install_server.sh -O install_outline.sh
+    chmod +x install_outline.sh
+    sudo ./install_outline.sh --auto-install
+    # Identify the image used by the official script
+    OUTLINE_IMAGE=$(sudo docker images --format '{{.Repository}}:{{.Tag}}' | grep -m 1 'outline.*shadowbox')
+    if [ -z "$OUTLINE_IMAGE" ]; then
+        echo "Error: Could not find Outline Shadowbox image. Please verify the image name or source."
+        exit 1
+    fi
+    echo "Using Outline image: ${OUTLINE_IMAGE}"
+    rm install_outline.sh
+fi
 
 # Step 4: Run Outline Server to generate configuration
 echo "Running Outline Server to generate initial configuration..."
@@ -81,19 +96,4 @@ echo "Cleaning up temporary files..."
 rm outline_server_image.tar ${DOCKER_OFFLINE_TAR}
 
 echo "Bundle created as ${ZIP_OUTPUT}"
-echo "Transfer ${ZIP_OUTPUT} to https://bash.hiradnikoo.com/outline/files/ and extract docker_${DOCKER_VERSION}.tar.gz for separate upload."
-# End of script
-# Note: Ensure you have the necessary permissions to run Docker commands and write to /opt/outline/config.
-# Note: The script assumes you are running on Ubuntu 20.04 (Focal Fossa) and may need adjustments for other versions.
-# Note: The script uses wget to download Docker packages; ensure wget is installed or modify to use curl.
-# Note: The script uses sleep to wait for the container to initialize; adjust the duration as needed based on your server's performance.
-# Note: The script uses hardcoded ports; modify them if necessary to avoid conflicts.
-# Note: The script assumes the Docker image and configuration are compatible with the Outline Server version.
-# Note: The script does not handle errors in downloading files; ensure the URLs are correct and accessible.
-# Note: The script does not include error handling for Docker commands; ensure Docker is installed and running correctly.
-# Note: The script does not include cleanup for downloaded files; consider adding cleanup steps if needed.
-# Note: The script does not include security measures; ensure the server is secured before deploying Outline Server.
-# Note: The script does not include logging; consider adding logging for better traceability.
-# Note: The script does not include validation of the configuration file; ensure the generated configuration is correct.
-# Note: The script does not include a check for existing Docker installations; ensure Docker is not already installed to avoid conflicts.
-# Note: The script does not include a check for existing Outline Server installations; ensure it is not already running to avoid conflicts.
+echo "Transfer ${ZIP_OUTPUT} to https://files.hiradnikoo.com/outline/ and extract docker_${DOCKER_VERSION}.tar.gz for separate upload."
