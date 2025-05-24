@@ -26,4 +26,4 @@ sudo ./${SCRIPT_NAME}
 echo "Cleaning up..."
 rm ${SCRIPT_NAME}
 
-echo "Setup complete. Upload outline_docker_bundle.zip and docker_20.10.7.tar.gz to https://bash.hiradnikoo.com/outline/files/"
+echo "Setup complete. Upload outline_docker_bundle.zip and docker_20.10.7.tar.gz to https://files.hiradnikoo.com/outline/"

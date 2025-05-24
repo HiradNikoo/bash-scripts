@@ -12,8 +12,8 @@ ZIP_FILE="outline_docker_bundle.zip"
 DOCKER_OFFLINE_TAR="docker_20.10.7.tar.gz"
 CONFIG_DIR="/opt/outline/config"
 CONFIG_FILE="${CONFIG_DIR}/shadowbox_config.json"
-OUTLINE_IMAGE="outline/shadowbox:latest"
-OUTLINE_CONTAINER_NAME="outline-server"
+OUTLINE_IMAGE="outline/shadowbox:custom"
+OUTLINE_CONTAINER_NAME="shadowbox"
 DOCKER_PORT="8080"
 API_PORT="8081"
 SERVER_IP=$(ip addr show | grep -oP '(?<=inet\s)\d+\.\d+\.\d+\.\d+' | grep -v '127.0.0.1' | head -n 1)
@@ -50,6 +50,13 @@ sudo systemctl enable docker
 # Step 5: Load Docker image
 echo "Loading Outline Server Docker image..."
 sudo docker load -i outline_server_image.tar
+LOADED_IMAGE=$(sudo docker images --format '{{.Repository}}:{{.Tag}}' | grep -m 1 'outline.*shadowbox')
+if [ -z "$LOADED_IMAGE" ]; then
+    echo "Error: Could not find Outline Shadowbox image. Please verify the exported image."
+    exit 1
+fi
+echo "Using Outline image: ${LOADED_IMAGE}"
+OUTLINE_IMAGE=${LOADED_IMAGE}
 
 # Step 6: Create configuration directory
 echo "Creating configuration directory..."
@@ -77,4 +84,3 @@ rm outline_server_image.tar ${DOCKER_OFFLINE_TAR} *.deb ${ZIP_FILE}
 
 echo "Outline Server is running on ${SERVER_IP}:${DOCKER_PORT}"
 echo "API is accessible at ${SERVER_IP}:${API_PORT}"
-echo "Setup complete. Outline Server is ready to use."

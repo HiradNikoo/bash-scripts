@@ -7,56 +7,44 @@
 set -e
 
 # Variables
-OUTLINE_IMAGE="docker.io/outline/shadowbox:latest"  # Updated to explicit registry
-OUTLINE_CONTAINER_NAME="outline-server"
 CONFIG_DIR="/opt/outline/config"
 ZIP_OUTPUT="outline_docker_bundle.zip"
 DOCKER_PORT="8080"
 API_PORT="8081"
 CONFIG_FILE="${CONFIG_DIR}/shadowbox_config.json"
 DOCKER_VERSION="20.10.7"
-DOCKER_OFFLINE_DIRtmp/docker_offline"
+DOCKER_OFFLINE_DIR="/tmp/docker_offline"
 DOCKER_OFFLINE_TAR="docker_${DOCKER_VERSION}.tar.gz"
+OUTLINE_REPO="https://github.com/Jigsaw-Code/outline-server.git"
+OUTLINE_DIR="/tmp/outline-server"
+OUTLINE_IMAGE="outline/shadowbox:custom"
+OUTLINE_CONTAINER_NAME="shadowbox"
 
-# Step 1: Install Docker
-echo "Installing Docker..."
+# Step 1: Install Docker and dependencies
+echo "Installing Docker and build dependencies..."
 sudo apt-get update
-sudo apt-get install -y docker.io
+sudo apt-get install -y docker.io git unzip
 sudo systemctl start docker
 sudo systemctl enable docker
 
-# Step 2: Create configuration directory
+# Step 2: Clone Outline repository and build Shadowbox image
+echo "Cloning Outline server repository..."
+rm -rf ${OUTLINE_DIR}
+git clone ${OUTLINE_REPO} ${OUTLINE_DIR}
+cd ${OUTLINE_DIR}/src/server_manager
+echo "Building Shadowbox Docker image..."
+sudo docker build -t ${OUTLINE_IMAGE} .
+cd /tmp
+rm -rf ${OUTLINE_DIR}
+
+# Step 3: Create configuration directory
 echo "Creating configuration directory..."
 sudo mkdir -p ${CONFIG_DIR}
 
-# Step 3: Pull and configure Outline Server
-echo "Pulling Outline Server Docker image..."
-if ! sudo docker pull ${OUTLINE_IMAGE}; then
-    echo "Error: Failed to pull ${OUTLINE_IMAGE}. Check if the image exists or requires authentication."
-    echo "Attempting to use Outline's official installation script to fetch image..."
-    # Fallback: Use Outline's official install script to get the image
-    wget https://raw.githubusercontent.com/Jigsaw-Code/outline-server/master/src/server_manager/install_scripts/install_server.sh -O install_outline.sh
-    chmod +x install_outline.sh
-    sudo ./install_outline.sh --auto-install
-    # Identify the image used by the official script
-    OUTLINE_IMAGE=$(sudo docker images --format '{{.Repository}}:{{.Tag}}' | grep -m 1 'outline.*shadowbox')
-    if [ -z "$OUTLINE_IMAGE" ]; then
-        echo "Error: Could not find Outline Shadowbox image. Please verify the image name or source."
-        exit 1
-    fi
-    echo "Using Outline image: ${OUTLINE_IMAGE}"
-    rm install_outline.sh
-fi
-
-# Step 4: Run Outline Server to generate configuration
-echo "Running Outline Server to generate initial configuration..."
-sudo docker run --name ${OUTLINE_CONTAINER_NAME} -d -p ${DOCKER_PORT}:8080 -p ${API_PORT}:8081 ${OUTLINE_IMAGE}
-
-# Wait for container to initialize
-sleep 10
-
-# Step 5: Generate a sample configuration (customizable)
+# Step 4: Generate a sample configuration (customizable)
 echo "Generating sample configuration..."
+sudo docker run --name ${OUTLINE_CONTAINER_NAME} -d -p ${DOCKER_PORT}:8080 -p ${API_PORT}:8081 ${OUTLINE_IMAGE}
+sleep 10
 sudo docker exec ${OUTLINE_CONTAINER_NAME} /bin/sh -c "echo '{
   \"apiUrl\": \"https://0.0.0.0:${API_PORT}\",
   \"port\": ${DOCKER_PORT},
@@ -71,11 +59,11 @@ echo "Cleaning up temporary container..."
 sudo docker stop ${OUTLINE_CONTAINER_NAME}
 sudo docker rm ${OUTLINE_CONTAINER_NAME}
 
-# Step 6: Export Docker image
+# Step 5: Export Docker image
 echo "Exporting Docker image to tar file..."
 sudo docker save -o outline_server_image.tar ${OUTLINE_IMAGE}
 
-# Step 7: Download Docker offline installer
+# Step 6: Download Docker offline installer
 echo "Downloading Docker offline installer..."
 mkdir -p ${DOCKER_OFFLINE_DIR}
 cd ${DOCKER_OFFLINE_DIR}
@@ -87,11 +75,11 @@ mv ${DOCKER_OFFLINE_TAR} /tmp/
 cd /tmp
 rm -rf ${DOCKER_OFFLINE_DIR}
 
-# Step 8: Zip Outline image, configuration, and Docker installer
+# Step 7: Zip Outline image, configuration, and Docker installer
 echo "Zipping Outline image, configuration, and Docker installer..."
 zip -r ${ZIP_OUTPUT} outline_server_image.tar ${CONFIG_FILE} ${DOCKER_OFFLINE_TAR}
 
-# Step 9: Clean up
+# Step 8: Clean up
 echo "Cleaning up temporary files..."
 rm outline_server_image.tar ${DOCKER_OFFLINE_TAR}
 
