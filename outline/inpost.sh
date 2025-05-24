@@ -7,7 +7,7 @@
 set -e
 
 # Variables
-WEBSITE_URL="https://files.hiradnikoo.com/outline"
+WEBSITE_URL="https://bash.hiradnikoo.com/outline/files"
 ZIP_FILE="outline_docker_bundle.zip"
 DOCKER_OFFLINE_TAR="docker_20.10.7.tar.gz"
 CONFIG_DIR="/opt/outline/config"
