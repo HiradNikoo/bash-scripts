@@ -12,36 +12,42 @@ ZIP_OUTPUT="outline_docker_bundle.zip"
 DOCKER_PORT="8080"
 API_PORT="8081"
 CONFIG_FILE="${CONFIG_DIR}/shadowbox_config.json"
-DOCKER_VERSION="20.10.7"
+DOCKER_VERSION="28.1.1"
 DOCKER_OFFLINE_DIR="/tmp/docker_offline"
 DOCKER_OFFLINE_TAR="docker_${DOCKER_VERSION}.tar.gz"
-OUTLINE_REPO="https://github.com/Jigsaw-Code/outline-server.git"
-OUTLINE_DIR="/tmp/outline-server"
-OUTLINE_IMAGE="outline/shadowbox:custom"
+OUTLINE_IMAGE="quay.io/outline/shadowbox:latest"
 OUTLINE_CONTAINER_NAME="shadowbox"
+UBUNTU_CODENAME=$(lsb_release -cs)
 
-# Step 1: Install Docker and dependencies
-echo "Installing Docker and build dependencies..."
+# Step 1: Install prerequisites
+echo "Installing prerequisites..."
 sudo apt-get update
-sudo apt-get install -y docker.io git unzip
+sudo apt-get install -y ca-certificates curl unzip
+
+# Step 2: Set up Docker repository
+echo "Setting up Docker repository..."
+sudo install -m 0755 -d /etc/apt/keyrings
+sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+sudo chmod a+r /etc/apt/keyrings/docker.asc
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu ${UBUNTU_CODENAME} stable" | \
+  sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+sudo apt-get update
+
+# Step 3: Install Docker
+echo "Installing Docker..."
+sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 sudo systemctl start docker
 sudo systemctl enable docker
 
-# Step 2: Clone Outline repository and build Shadowbox image
-echo "Cloning Outline server repository..."
-rm -rf ${OUTLINE_DIR}
-git clone ${OUTLINE_REPO} ${OUTLINE_DIR}
-cd ${OUTLINE_DIR}/src/server_manager
-echo "Building Shadowbox Docker image..."
-sudo docker build -t ${OUTLINE_IMAGE} .
-cd /tmp
-rm -rf ${OUTLINE_DIR}
+# Step 4: Pull Outline Server image
+echo "Pulling Outline Server image..."
+sudo docker pull ${OUTLINE_IMAGE}
 
-# Step 3: Create configuration directory
+# Step 5: Create configuration directory
 echo "Creating configuration directory..."
 sudo mkdir -p ${CONFIG_DIR}
 
-# Step 4: Generate a sample configuration (customizable)
+# Step 6: Generate a sample configuration (customizable)
 echo "Generating sample configuration..."
 sudo docker run --name ${OUTLINE_CONTAINER_NAME} -d -p ${DOCKER_PORT}:8080 -p ${API_PORT}:8081 ${OUTLINE_IMAGE}
 sleep 10
@@ -59,29 +65,32 @@ echo "Cleaning up temporary container..."
 sudo docker stop ${OUTLINE_CONTAINER_NAME}
 sudo docker rm ${OUTLINE_CONTAINER_NAME}
 
-# Step 5: Export Docker image
+# Step 7: Export Docker image
 echo "Exporting Docker image to tar file..."
 sudo docker save -o outline_server_image.tar ${OUTLINE_IMAGE}
 
-# Step 6: Download Docker offline installer
-echo "Downloading Docker offline installer..."
+# Step 8: Download Docker offline installer packages
+echo "Downloading Docker offline installer packages..."
 mkdir -p ${DOCKER_OFFLINE_DIR}
 cd ${DOCKER_OFFLINE_DIR}
-wget https://download.docker.com/linux/ubuntu/dists/focal/pool/stable/amd64/containerd.io_1.6.9-1_amd64.deb
-wget https://download.docker.com/linux/ubuntu/dists/focal/pool/stable/amd64/docker-ce-cli_${DOCKER_VERSION}~3-0~ubuntu-focal_amd64.deb
-wget https://download.docker.com/linux/ubuntu/dists/focal/pool/stable/amd64/docker-ce_${DOCKER_VERSION}~3-0~ubuntu-focal_amd64.deb
+wget https://download.docker.com/linux/ubuntu/dists/${UBUNTU_CODENAME}/pool/stable/amd64/containerd.io_1.7.26-1_amd64.deb
+wget https://download.docker.com/linux/ubuntu/dists/${UBUNTU_CODENAME}/pool/stable/amd64/docker-ce-cli_${DOCKER_VERSION}-1~ubuntu.24.04~noble_amd64.deb
+wget https://download.docker.com/linux/ubuntu/dists/${UBUNTU_CODENAME}/pool/stable/amd64/docker-ce_${DOCKER_VERSION}-1~ubuntu.24.04~noble_amd64.deb
+wget https://download.docker.com/linux/ubuntu/dists/${UBUNTU_CODENAME}/pool/stable/amd64/docker-buildx-plugin_0.16.2-1~ubuntu.24.04~noble_amd64.deb
+wget https://download.docker.com/linux/ubuntu/dists/${UBUNTU_CODENAME}/pool/stable/amd64/docker-compose-plugin_2.35.1-1~ubuntu.24.04~noble_amd64.deb
 tar -czvf ${DOCKER_OFFLINE_TAR} *.deb
 mv ${DOCKER_OFFLINE_TAR} /tmp/
 cd /tmp
 rm -rf ${DOCKER_OFFLINE_DIR}
 
-# Step 7: Zip Outline image, configuration, and Docker installer
+# Step 9: Zip Outline image, configuration, and Docker installer
 echo "Zipping Outline image, configuration, and Docker installer..."
 zip -r ${ZIP_OUTPUT} outline_server_image.tar ${CONFIG_FILE} ${DOCKER_OFFLINE_TAR}
 
-# Step 8: Clean up
+# Step 10: Clean up
 echo "Cleaning up temporary files..."
 rm outline_server_image.tar ${DOCKER_OFFLINE_TAR}
 
 echo "Bundle created as ${ZIP_OUTPUT}"
 echo "Transfer ${ZIP_OUTPUT} to https://files.hiradnikoo.com/outline/ and extract docker_${DOCKER_VERSION}.tar.gz for separate upload."
+# End of script
