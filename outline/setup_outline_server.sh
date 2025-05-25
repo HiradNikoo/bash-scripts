@@ -16,7 +16,7 @@ DOCKER_VERSION="27.3.1"  # Latest stable as of knowledge cutoff
 CONTAINERD_VERSION="2.0.0-rc.2"
 DOCKER_OFFLINE_DIR="/tmp/docker_offline"
 DOCKER_OFFLINE_TAR="docker_offline.tar.gz"
-OUTLINE_IMAGE="quay.io/outline/shadowbox:latest"
+OUTLINE_IMAGE="quay.io/outline/shadowbox:stable"
 OUTLINE_CONTAINER_NAME="shadowbox"
 UBUNTU_CODENAME=$(lsb_release -cs)
 
