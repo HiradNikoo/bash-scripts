@@ -13,7 +13,7 @@ DOCKER_PORT="8080"
 API_PORT="8081"
 CONFIG_FILE="${CONFIG_DIR}/shadowbox_config.json"
 DOCKER_OFFLINE_TAR="docker_offline.tar.gz"
-OUTLINE_IMAGE="quay.io/outline/shadowbox:latest"
+OUTLINE_IMAGE="quay.io/outline/shadowbox:stable"
 OUTLINE_CONTAINER_NAME="shadowbox"
 
 # Step 1: Install unzip
