@@ -22,11 +22,13 @@ ARCH=$(dpkg --print-architecture)
 # Step 1: Install prerequisites
 echo "Installing prerequisites..."
 sudo apt-get update
-sudo apt-get install -y ca-certificates curl unzip wget apt-transport-https gnupg lsb-release
+sudo apt-get install -y ca-certificates curl unzip wget apt-transport-https gnupg lsb-release zip
 
 # Step 2: Set up Docker repository
 echo "Setting up Docker repository..."
 sudo install -m 0755 -d /etc/apt/keyrings
+# Remove existing GPG key file to avoid overwrite prompt
+[ -f /etc/apt/keyrings/docker.gpg ] && sudo rm /etc/apt/keyrings/docker.gpg
 curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
 sudo chmod a+r /etc/apt/keyrings/docker.gpg
 echo "deb [arch=${ARCH} signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu ${UBUNTU_CODENAME} stable" | \
