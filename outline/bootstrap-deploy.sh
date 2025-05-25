@@ -12,24 +12,22 @@ SCRIPT_NAME="deploy_outline_server.sh"
 
 # Step 1: Download the deploy script
 echo "Downloading deploy script from ${SCRIPT_URL}..."
-wget ${SCRIPT_URL} -O ${SCRIPT_NAME}
+if ! wget -q --tries=3 --timeout=10 "${SCRIPT_URL}" -O "${SCRIPT_NAME}"; then
+  echo "Error: Failed to download ${SCRIPT_URL}. Check the URL or network connection."
+  exit 1
+fi
 
 # Step 2: Make the script executable
 echo "Making the script executable..."
-chmod +x ${SCRIPT_NAME}
+chmod +x "${SCRIPT_NAME}"
 
 # Step 3: Run the script
 echo "Running deploy_outline_server.sh..."
-sudo ./${SCRIPT_NAME}
+sudo ./"${SCRIPT_NAME}"
 
 # Step 4: Clean up
 echo "Cleaning up..."
-rm ${SCRIPT_NAME}
+rm "${SCRIPT_NAME}"
 
 echo "Deployment complete."
-# Note: Ensure you have the necessary permissions to run the script and that the URL is accessible.
-# The script will set up the Outline Server on the second server using the offline Docker image and configuration files.
-# The output will be a running Outline Server instance.
-# Ensure you have the necessary permissions to run the script and that the URL is accessible.
-# The script will set up the Outline Server on the second server using the offline Docker image and configuration files.
-# The output will be a running Outline Server instance.
+
