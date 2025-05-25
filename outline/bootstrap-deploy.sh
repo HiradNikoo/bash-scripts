@@ -7,7 +7,7 @@
 set -e
 
 # Variables
-SCRIPT_URL="https://files.hiradnikoo.com/outline/deploy_outline_server.sh"
+SCRIPT_URL="https://bash.hiradnikoo.com/outline/files/deploy_outline_server.sh"
 SCRIPT_NAME="deploy_outline_server.sh"
 
 # Step 1: Download the deploy script

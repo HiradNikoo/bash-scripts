@@ -7,7 +7,7 @@
 set -e
 
 # Variables
-SCRIPT_URL="https://files.hiradnikoo.com/outline/setup_outline_server.sh"
+SCRIPT_URL="https://bash.hiradnikoo.com/outline/setup_outline_server.sh"
 SCRIPT_NAME="setup_outline_server.sh"
 
 # Step 1: Download the setup script
@@ -26,7 +26,7 @@ sudo ./${SCRIPT_NAME}
 echo "Cleaning up..."
 rm ${SCRIPT_NAME}
 
-echo "Setup complete. Upload outline_docker_bundle.zip and docker_${DOCKER_VERSION}.tar.gz to https://files.hiradnikoo.com/outline/"
+echo "Setup complete. Upload outline_docker_bundle.zip and docker_${DOCKER_VERSION}.tar.gz to https://bash.hiradnikoo.com/outline/files/"
 echo "You can now transfer the files to the second server and run deploy_outline_server.sh."
 # Note: Ensure you have the necessary permissions to run the script and that the URL is accessible.
 # The script will create the necessary files and directories, and prepare the Docker image for offline deployment.

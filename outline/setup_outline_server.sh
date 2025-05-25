@@ -92,5 +92,5 @@ echo "Cleaning up temporary files..."
 rm outline_server_image.tar ${DOCKER_OFFLINE_TAR}
 
 echo "Bundle created as ${ZIP_OUTPUT}"
-echo "Transfer ${ZIP_OUTPUT} to https://files.hiradnikoo.com/outline/ and extract docker_${DOCKER_VERSION}.tar.gz for separate upload."
+echo "Transfer ${ZIP_OUTPUT} to https://bash.hiradnikoo.com/outline/files and extract docker_${DOCKER_VERSION}.tar.gz for separate upload."
 # End of script
