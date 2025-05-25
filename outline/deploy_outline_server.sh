@@ -29,9 +29,12 @@ unzip "${ZIP_BUNDLE}"
 echo "Installing Docker from offline packages..."
 tar -xzvf "${DOCKER_OFFLINE_TAR}"
 sudo dpkg -i *.deb
-if ! sudo systemctl start docker; then
-  echo "Error: Failed to start Docker service. Check 'systemctl status docker.service' for details."
-  exit 1
+if ! sudo systemctl is-active --quiet docker; then
+  echo "Starting Docker service..."
+  sudo systemctl start docker || {
+    echo "Error: Failed to start Docker service. Check 'systemctl status docker' for details."
+    exit 1
+  }
 fi
 sudo systemctl enable docker
 
@@ -50,6 +53,10 @@ sudo mv shadowbox_config.json "${CONFIG_FILE}"
 # Step 7: Update configuration with server IP
 echo "Updating configuration with server IP..."
 SERVER_IP=$(ip addr show $(ip route | awk '/default/ {print $5}') | grep "inet" | head -n 1 | awk '/inet/ {print $2}' | cut -d'/' -f1)
+if [ -z "${SERVER_IP}" ]; then
+  echo "Error: Could not determine server IP address."
+  exit 1
+fi
 sudo sed -i "s/0.0.0.0/${SERVER_IP}/g" "${CONFIG_FILE}"
 
 # Step 8: Run Outline Server container
@@ -66,5 +73,3 @@ rm -f outline_server_image.tar "${DOCKER_OFFLINE_TAR}" *.deb
 echo "Outline Server deployed successfully."
 echo "Access the API at https://${SERVER_IP}:${API_PORT}"
 echo "Access the web interface at http://${SERVER_IP}:${DOCKER_PORT}"
-# Note: Ensure you have the necessary permissions to run the script and that the files are accessible.
-# The script will set up the Outline Server on the second server using the offline Docker image and configuration files.

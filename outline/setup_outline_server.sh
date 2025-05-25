@@ -12,34 +12,36 @@ ZIP_OUTPUT="outline_docker_bundle.zip"
 DOCKER_PORT="8080"
 API_PORT="8081"
 CONFIG_FILE="${CONFIG_DIR}/shadowbox_config.json"
-DOCKER_VERSION="27.3.1"  # Latest stable as of knowledge cutoff
-CONTAINERD_VERSION="2.0.0-rc.2"
 DOCKER_OFFLINE_DIR="/tmp/docker_offline"
 DOCKER_OFFLINE_TAR="docker_offline.tar.gz"
 OUTLINE_IMAGE="quay.io/outline/shadowbox:stable"
 OUTLINE_CONTAINER_NAME="shadowbox"
 UBUNTU_CODENAME=$(lsb_release -cs)
+ARCH=$(dpkg --print-architecture)
 
 # Step 1: Install prerequisites
 echo "Installing prerequisites..."
 sudo apt-get update
-sudo apt-get install -y ca-certificates curl unzip wget apt-transport-https gnupg
+sudo apt-get install -y ca-certificates curl unzip wget apt-transport-https gnupg lsb-release
 
 # Step 2: Set up Docker repository
 echo "Setting up Docker repository..."
 sudo install -m 0755 -d /etc/apt/keyrings
 curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
 sudo chmod a+r /etc/apt/keyrings/docker.gpg
-echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu ${UBUNTU_CODENAME} stable" | \
+echo "deb [arch=${ARCH} signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu ${UBUNTU_CODENAME} stable" | \
   sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
 sudo apt-get update
 
 # Step 3: Install Docker
 echo "Installing Docker..."
 sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-if ! sudo systemctl start docker; then
-  echo "Error: Failed to start Docker service. Check 'systemctl status docker.service' for details."
-  exit 1
+if ! sudo systemctl is-active --quiet docker; then
+  echo "Starting Docker service..."
+  sudo systemctl start docker || {
+    echo "Error: Failed to start Docker service. Check 'systemctl status docker' for details."
+    exit 1
+  }
 fi
 sudo systemctl enable docker
 
@@ -70,16 +72,19 @@ echo "Downloading Docker offline installer packages..."
 mkdir -p "${DOCKER_OFFLINE_DIR}"
 cd "${DOCKER_OFFLINE_DIR}"
 
-# Dynamically fetch package URLs
-BASE_URL="https://download.docker.com/linux/ubuntu/dists/${UBUNTU_CODENAME}/pool/stable/amd64"
-for pkg in "containerd.io_${CONTAINERD_VERSION}" "docker-ce_${DOCKER_VERSION}" "docker-ce-cli_${DOCKER_VERSION}" "docker-buildx-plugin" "docker-compose-plugin"; do
-  echo "Fetching ${pkg}..."
-  pkg_file=$(curl -s "${BASE_URL}/" | grep "${pkg}" | awk -F'"' '{print $2}' | sort -V | tail -n 1)
+# Dynamically fetch the latest stable package versions
+BASE_URL="https://download.docker.com/linux/ubuntu/dists/${UBUNTU_CODENAME}/pool/stable/${ARCH}"
+for pkg in "containerd.io" "docker-ce" "docker-ce-cli" "docker-buildx-plugin" "docker-compose-plugin"; do
+  echo "Fetching latest ${pkg}..."
+  pkg_file=$(curl -s "${BASE_URL}/" | grep "${pkg}_" | awk -F'"' '{print $2}' | sort -V | tail -n 1)
   if [ -z "${pkg_file}" ]; then
     echo "Error: Could not find package for ${pkg}."
     exit 1
   fi
-  wget "${BASE_URL}/${pkg_file}"
+  wget -q "${BASE_URL}/${pkg_file}" || {
+    echo "Error: Failed to download ${pkg_file}."
+    exit 1
+  }
 done
 
 tar -czvf "${DOCKER_OFFLINE_TAR}" *.deb
@@ -93,10 +98,8 @@ zip -r "${ZIP_OUTPUT}" outline_server_image.tar "${CONFIG_FILE}" "${DOCKER_OFFLI
 
 # Step 10: Clean up
 echo "Cleaning up temporary files..."
-rm outline_server_image.tar "${DOCKER_OFFLINE_TAR}"
+rm -f outline_server_image.tar "${DOCKER_OFFLINE_TAR}"
 
 echo "Bundle created as ${ZIP_OUTPUT}"
 echo "Transfer ${ZIP_OUTPUT} to https://bash.hiradnikoo.com/outline/files and extract docker_offline.tar.gz for separate upload."
 echo "You can now transfer the files to the second server and run deploy_outline_server.sh."
-echo "Setup complete. You can now run deploy_outline_server.sh on the second server."
-# Note: Ensure you have the necessary permissions to run the script and that the URLs are accessible.
