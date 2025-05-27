@@ -97,7 +97,7 @@ rm -rf "${DOCKER_OFFLINE_DIR}"
 # Step 9: Zip Outline image and configuration
 echo "Zipping Outline image, configuration, and Docker installer..."
 mkdir files
-zip -r "${ZIP_OUTPUT}" ./files/outline_server_image.tar "${CONFIG_FILE}" "${DOCKER_OFFLINE_TAR}"
+zip -r "files/${ZIP_OUTPUT}" outline_server_image.tar "${CONFIG_FILE}" "${DOCKER_OFFLINE_TAR}"
 
 # Step 10: Clean up
 echo "Cleaning up temporary files..."
