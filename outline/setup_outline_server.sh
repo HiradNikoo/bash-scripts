@@ -8,7 +8,7 @@ set -e
 
 # Variables
 CONFIG_DIR="/opt/outline/config"
-ZIP_OUTPUT="outline_docker_bundle.zip"
+ZIP_OUTPUT="files/outline_docker_bundle.zip"
 DOCKER_PORT="8080"
 API_PORT="8081"
 CONFIG_FILE="${CONFIG_DIR}/shadowbox_config.json"
@@ -96,14 +96,15 @@ rm -rf "${DOCKER_OFFLINE_DIR}"
 
 # Step 9: Zip Outline image and configuration
 echo "Zipping Outline image, configuration, and Docker installer..."
-zip -r "${ZIP_OUTPUT}" ./files/outline_server_image.tar "${CONFIG_FILE}" "${DOCKER_OFFLINE_TAR}"
+mkdir -p files
+zip -r "${ZIP_OUTPUT}" outline_server_image.tar "${CONFIG_FILE}" "${DOCKER_OFFLINE_TAR}"
 
 # Step 10: Clean up
 echo "Cleaning up temporary files..."
 rm -f outline_server_image.tar "${DOCKER_OFFLINE_TAR}"
 
-echo "Bundle created as files/${ZIP_OUTPUT}"
-echo "Transfer files/${ZIP_OUTPUT} to https://bash.hiradnikoo.com/outline/files and extract docker_offline.tar.gz for separate upload."
+echo "Bundle created as ${ZIP_OUTPUT}"
+echo "Transfer ${ZIP_OUTPUT} to https://bash.hiradnikoo.com/outline/files and extract docker_offline.tar.gz for separate upload."
 echo "You can now transfer the files to the second server and run deploy_outline_server.sh."
 echo "On the second server (serverB), run the following command to fetch and execute bootstrap-deploy.sh:"
 echo "wget -O bootstrap-deploy.sh https://bash.hiradnikoo.com/outline/bootstrap-deploy.sh && chmod +x bootstrap-deploy.sh && sudo ./bootstrap-deploy.sh"
