@@ -8,7 +8,7 @@ set -e
 
 # Variables
 CONFIG_DIR="/opt/outline/config"
-ZIP_OUTPUT="outline_docker_bundle.zip"
+ZIP_OUTPUT="files/outline_docker_bundle.zip"
 DOCKER_PORT="8080"
 API_PORT="8081"
 CONFIG_FILE="${CONFIG_DIR}/shadowbox_config.json"
@@ -96,8 +96,7 @@ rm -rf "${DOCKER_OFFLINE_DIR}"
 
 # Step 9: Zip Outline image and configuration
 echo "Zipping Outline image, configuration, and Docker installer..."
-mkdir files
-zip -r "files/${ZIP_OUTPUT}" outline_server_image.tar "${CONFIG_FILE}" "${DOCKER_OFFLINE_TAR}"
+zip -r "${ZIP_OUTPUT}" outline_server_image.tar "${CONFIG_FILE}" "${DOCKER_OFFLINE_TAR}"
 
 # Step 10: Clean up
 echo "Cleaning up temporary files..."
