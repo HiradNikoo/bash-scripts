@@ -8,7 +8,7 @@
 set -e
 
 # Variables
-FILES_DIR="./files"  # Create files directory in current working directory
+FILES_DIR="$(pwd)/files"  # Use absolute path for FILES_DIR
 CONFIG_DIR="/opt/outline/config"
 ZIP_OUTPUT="${FILES_DIR}/outline_docker_bundle.zip"
 DOCKER_PORT="8080"
@@ -30,7 +30,6 @@ sudo apt-get install -y ca-certificates curl unzip wget apt-transport-https gnup
 # Step 2: Set up Docker repository
 echo "Setting up Docker repository..."
 sudo install -m 0755 -d /etc/apt/keyrings
-# Remove existing GPG key file to avoid overwrite prompt
 [ -f /etc/apt/keyrings/docker.gpg ] && sudo rm /etc/apt/keyrings/docker.gpg
 curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
 sudo chmod a+r /etc/apt/keyrings/docker.gpg
@@ -57,6 +56,7 @@ sudo docker pull "${OUTLINE_IMAGE}"
 # Step 5: Create configuration directory
 echo "Creating configuration directory..."
 sudo mkdir -p "${CONFIG_DIR}"
+sudo chown $(whoami):$(whoami) "${CONFIG_DIR}"  # Ensure user can write to config dir
 
 # Step 6: Generate sample configuration
 echo "Generating sample configuration..."
@@ -67,6 +67,7 @@ sudo bash -c "cat > ${CONFIG_FILE} <<EOF
   \"hostname\": \"0.0.0.0\"
 }
 EOF"
+sudo chown $(whoami):$(whoami) "${CONFIG_FILE}"  # Ensure user can read config file
 
 # Step 7: Export Docker image
 echo "Exporting Docker image to tar file..."
@@ -76,6 +77,7 @@ if [ ! -f "${OUTLINE_IMAGE_TAR}" ]; then
   echo "Error: Failed to create ${OUTLINE_IMAGE_TAR}"
   exit 1
 fi
+sudo chown $(whoami):$(whoami) "${OUTLINE_IMAGE_TAR}"  # Ensure user can read tar file
 
 # Step 8: Download Docker offline installer packages
 echo "Downloading Docker offline installer packages..."
@@ -107,16 +109,40 @@ mv "${DOCKER_OFFLINE_TAR}" "${FILES_DIR}/" || {
   echo "Error: Failed to move ${DOCKER_OFFLINE_TAR} to ${FILES_DIR}/"
   exit 1
 }
+sudo chown $(whoami):$(whoami) "${FILES_DIR}/${DOCKER_OFFLINE_TAR}"  # Ensure user can read tar file
 cd /tmp
 rm -rf "${DOCKER_OFFLINE_DIR}"
 
 # Step 9: Zip Outline image and configuration
 echo "Zipping Outline image, configuration, and Docker installer..."
-mkdir -p "${FILES_DIR}"
-zip -r "${ZIP_OUTPUT}" "${OUTLINE_IMAGE_TAR}" "${CONFIG_FILE}" "${FILES_DIR}/${DOCKER_OFFLINE_TAR}" || {
+# Verify all files exist
+for file in "${OUTLINE_IMAGE_TAR}" "${CONFIG_FILE}" "${FILES_DIR}/${DOCKER_OFFLINE_TAR}"; do
+  if [ ! -f "${file}" ]; then
+    echo "Error: File ${file} does not exist"
+    exit 1
+  fi
+  echo "Confirmed ${file} exists"
+done
+
+# Ensure zip command is available
+if ! command -v zip &> /dev/null; then
+  echo "Error: zip command not found. Please ensure zip is installed."
+  exit 1
+fi
+
+# Change to FILES_DIR to simplify zip paths
+cd "${FILES_DIR}"
+zip -r "${ZIP_OUTPUT}" "$(basename ${OUTLINE_IMAGE_TAR})" "${CONFIG_FILE}" "${DOCKER_OFFLINE_TAR}" || {
   echo "Error: Failed to create zip file ${ZIP_OUTPUT}"
   exit 1
 }
+
+# Verify zip file was created
+if [ ! -f "${ZIP_OUTPUT}" ]; then
+  echo "Error: Zip file ${ZIP_OUTPUT} was not created"
+  exit 1
+fi
+echo "Zip file created successfully: ${ZIP_OUTPUT}"
 
 # Step 10: Clean up
 echo "Cleaning up temporary files..."
