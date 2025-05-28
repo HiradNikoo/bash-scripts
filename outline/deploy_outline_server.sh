@@ -9,6 +9,7 @@ set -e
 # Variables
 CONFIG_DIR="/opt/outline/config"
 ZIP_BUNDLE="outline_docker_bundle.zip"
+DOWNLOAD_URL="http://github.com/HiradNikoo/bash-scripts/releases/latest/download/outline_docker_bundle.zip"
 DOCKER_PORT="8080"
 API_PORT="8081"
 CONFIG_FILE="${CONFIG_DIR}/shadowbox_config.json"
@@ -16,16 +17,24 @@ DOCKER_OFFLINE_TAR="docker_offline.tar.gz"
 OUTLINE_IMAGE="quay.io/outline/shadowbox:stable"
 OUTLINE_CONTAINER_NAME="shadowbox"
 
-# Step 1: Install unzip
-echo "Installing unzip..."
+# Step 1: Install wget and unzip
+echo "Installing wget and unzip..."
 sudo apt-get update
-sudo apt-get install -y unzip tar
+sudo apt-get install -y wget unzip tar
 
-# Step 2: Unzip the bundle
+# Step 2: Download the bundle
+echo "Downloading the bundle from ${DOWNLOAD_URL}..."
+wget -O "${ZIP_BUNDLE}" "${DOWNLOAD_URL}"
+if [ ! -f "${ZIP_BUNDLE}" ]; then
+  echo "Error: Failed to download the bundle."
+  exit 1
+fi
+
+# Step 3: Unzip the bundle
 echo "Unzipping the bundle..."
 unzip "${ZIP_BUNDLE}"
 
-# Step 3: Install Docker from offline packages
+# Step 4: Install Docker from offline packages
 echo "Installing Docker from offline packages..."
 tar -xzvf "${DOCKER_OFFLINE_TAR}"
 sudo dpkg -i *.deb
@@ -38,19 +47,19 @@ if ! sudo systemctl is-active --quiet docker; then
 fi
 sudo systemctl enable docker
 
-# Step 4: Load Outline Server image
+# Step 5: Load Outline Server image
 echo "Loading Outline Server image..."
 sudo docker load -i outline_server_image.tar
 
-# Step 5: Create configuration directory
+# Step 6: Create configuration directory
 echo "Creating configuration directory..."
 sudo mkdir -p "${CONFIG_DIR}"
 
-# Step 6: Move configuration file
+# Step 7: Move configuration file
 echo "Moving configuration file..."
 sudo mv shadowbox_config.json "${CONFIG_FILE}"
 
-# Step 7: Update configuration with server IP
+# Step 8: Update configuration with server IP
 echo "Updating configuration with server IP..."
 SERVER_IP=$(ip addr show $(ip route | awk '/default/ {print $5}') | grep "inet" | head -n 1 | awk '/inet/ {print $2}' | cut -d'/' -f1)
 if [ -z "${SERVER_IP}" ]; then
@@ -59,16 +68,16 @@ if [ -z "${SERVER_IP}" ]; then
 fi
 sudo sed -i "s/0.0.0.0/${SERVER_IP}/g" "${CONFIG_FILE}"
 
-# Step 8: Run Outline Server container
+# Step 9: Run Outline Server container
 echo "Starting Outline Server container..."
 sudo docker run --name "${OUTLINE_CONTAINER_NAME}" -d --restart=always \
   -p "${DOCKER_PORT}:8080" -p "${API_PORT}:8081" \
   -v "${CONFIG_FILE}:/root/shadowbox_config.json" \
   "${OUTLINE_IMAGE}"
 
-# Step 9: Clean up
+# Step 10: Clean up
 echo "Cleaning up..."
-rm -f outline_server_image.tar "${DOCKER_OFFLINE_TAR}" *.deb
+rm -f outline_server_image.tar "${DOCKER_OFFLINE_TAR}" *.deb "${ZIP_BUNDLE}"
 
 echo "Outline Server deployed successfully."
 echo "Access the API at https://${SERVER_IP}:${API_PORT}"
