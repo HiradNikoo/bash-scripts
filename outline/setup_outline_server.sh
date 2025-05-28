@@ -90,18 +90,19 @@ for pkg in "containerd.io" "docker-ce" "docker-ce-cli" "docker-buildx-plugin" "d
 done
 
 tar -czvf "${DOCKER_OFFLINE_TAR}" *.deb
-mv "${DOCKER_OFFLINE_TAR}" /tmp/
+mkdir -p files  # Ensure files directory exists
+mv "${DOCKER_OFFLINE_TAR}" files/  # Move to files/ instead of /tmp/
 cd /tmp
 rm -rf "${DOCKER_OFFLINE_DIR}"
 
 # Step 9: Zip Outline image and configuration
 echo "Zipping Outline image, configuration, and Docker installer..."
 mkdir -p files
-zip -r "${ZIP_OUTPUT}" outline_server_image.tar "${CONFIG_FILE}" "${DOCKER_OFFLINE_TAR}"
+zip -r "${ZIP_OUTPUT}" outline_server_image.tar "${CONFIG_FILE}" "files/${DOCKER_OFFLINE_TAR}"
 
 # Step 10: Clean up
 echo "Cleaning up temporary files..."
-rm -f outline_server_image.tar "${DOCKER_OFFLINE_TAR}"
+rm -f outline_server_image.tar "files/${DOCKER_OFFLINE_TAR}"
 
 echo "Bundle created as ${ZIP_OUTPUT}"
 echo "Transfer ${ZIP_OUTPUT} to https://bash.hiradnikoo.com/outline/files and extract docker_offline.tar.gz for separate upload."
