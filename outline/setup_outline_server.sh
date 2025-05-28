@@ -2,13 +2,15 @@
 
 # Script to set up Outline Server and Docker offline installer, then zip them
 # Run on the first Ubuntu server with internet access
+# Creates a 'files' directory in the current working directory for output
 
 # Exit on error
 set -e
 
 # Variables
+FILES_DIR="./files"  # Create files directory in current working directory
 CONFIG_DIR="/opt/outline/config"
-ZIP_OUTPUT="files/outline_docker_bundle.zip"
+ZIP_OUTPUT="${FILES_DIR}/outline_docker_bundle.zip"
 DOCKER_PORT="8080"
 API_PORT="8081"
 CONFIG_FILE="${CONFIG_DIR}/shadowbox_config.json"
@@ -18,6 +20,7 @@ OUTLINE_IMAGE="quay.io/outline/shadowbox:stable"
 OUTLINE_CONTAINER_NAME="shadowbox"
 UBUNTU_CODENAME=$(lsb_release -cs)
 ARCH=$(dpkg --print-architecture)
+OUTLINE_IMAGE_TAR="${FILES_DIR}/outline_server_image.tar"  # Store tar in FILES_DIR
 
 # Step 1: Install prerequisites
 echo "Installing prerequisites..."
@@ -67,7 +70,12 @@ EOF"
 
 # Step 7: Export Docker image
 echo "Exporting Docker image to tar file..."
-sudo docker save -o outline_server_image.tar "${OUTLINE_IMAGE}"
+mkdir -p "${FILES_DIR}"
+sudo docker save -o "${OUTLINE_IMAGE_TAR}" "${OUTLINE_IMAGE}"
+if [ ! -f "${OUTLINE_IMAGE_TAR}" ]; then
+  echo "Error: Failed to create ${OUTLINE_IMAGE_TAR}"
+  exit 1
+fi
 
 # Step 8: Download Docker offline installer packages
 echo "Downloading Docker offline installer packages..."
@@ -90,19 +98,31 @@ for pkg in "containerd.io" "docker-ce" "docker-ce-cli" "docker-buildx-plugin" "d
 done
 
 tar -czvf "${DOCKER_OFFLINE_TAR}" *.deb
-mkdir -p files  # Ensure files directory exists
-mv "${DOCKER_OFFLINE_TAR}" files/  # Move to files/ instead of /tmp/
+if [ ! -f "${DOCKER_OFFLINE_TAR}" ]; then
+  echo "Error: Failed to create ${DOCKER_OFFLINE_TAR}"
+  exit 1
+fi
+mkdir -p "${FILES_DIR}"
+mv "${DOCKER_OFFLINE_TAR}" "${FILES_DIR}/" || {
+  echo "Error: Failed to move ${DOCKER_OFFLINE_TAR} to ${FILES_DIR}/"
+  exit 1
+}
 cd /tmp
 rm -rf "${DOCKER_OFFLINE_DIR}"
 
 # Step 9: Zip Outline image and configuration
 echo "Zipping Outline image, configuration, and Docker installer..."
-mkdir -p files
-zip -r "${ZIP_OUTPUT}" outline_server_image.tar "${CONFIG_FILE}" "files/${DOCKER_OFFLINE_TAR}"
+mkdir -p "${FILES_DIR}"
+zip -r "${ZIP_OUTPUT}" "${OUTLINE_IMAGE_TAR}" "${CONFIG_FILE}" "${FILES_DIR}/${DOCKER_OFFLINE_TAR}" || {
+  echo "Error: Failed to create zip file ${ZIP_OUTPUT}"
+  exit 1
+}
 
 # Step 10: Clean up
 echo "Cleaning up temporary files..."
-rm -f outline_server_image.tar "files/${DOCKER_OFFLINE_TAR}"
+rm -f "${OUTLINE_IMAGE_TAR}"
+# Comment out the next line if you want to keep docker_offline.tar.gz in FILES_DIR for separate upload
+# rm -f "${FILES_DIR}/${DOCKER_OFFLINE_TAR}"
 
 echo "Bundle created as ${ZIP_OUTPUT}"
 echo "Transfer ${ZIP_OUTPUT} to https://bash.hiradnikoo.com/outline/files and extract docker_offline.tar.gz for separate upload."
