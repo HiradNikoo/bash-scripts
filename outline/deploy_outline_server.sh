@@ -57,7 +57,7 @@ sudo mkdir -p "${CONFIG_DIR}"
 
 # Step 7: Move configuration file
 echo "Moving configuration file..."
-sudo mv shadowbox_config.json "${CONFIG_FILE}"
+sudo mv ./opt/outline/config/shadowbox_config.json "${CONFIG_FILE}"
 
 # Step 8: Update configuration with server IP
 echo "Updating configuration with server IP..."
