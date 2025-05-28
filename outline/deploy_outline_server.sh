@@ -19,7 +19,7 @@ OUTLINE_CONTAINER_NAME="shadowbox"
 # Step 1: Install unzip
 echo "Installing unzip..."
 sudo apt-get update
-sudo apt-get install -y unzip
+sudo apt-get install -y unzip tar
 
 # Step 2: Unzip the bundle
 echo "Unzipping the bundle..."
