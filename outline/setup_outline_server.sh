@@ -4,6 +4,7 @@
 # Run on the first Ubuntu server with internet access
 # Creates a 'files' directory in the current working directory for output
 # Verifies Outline VPN container is running and functional before exporting image
+# Ensures container is rewritten on rerun by removing existing container
 
 # Exit on error
 set -e
@@ -26,7 +27,7 @@ OUTLINE_IMAGE_TAR="${FILES_DIR}/outline_server_image.tar"  # Store tar in FILES_
 # Step 1: Install prerequisites
 echo "Installing prerequisites..."
 sudo apt-get update
-sudo apt-get install -y ca-certificates curl unzip wget apt-transport-https gnupg lsb-release zip
+sudo apt-get install -y ca-certificates curl unzip wget apt-transport-https gnupg lsb-release zip net-tools
 
 # Step 2: Set up Docker repository
 echo "Setting up Docker repository..."
@@ -70,19 +71,21 @@ sudo bash -c "cat > ${CONFIG_FILE} <<EOF
 EOF"
 sudo chown $(whoami):$(whoami) "${CONFIG_FILE}"  # Ensure user can read config file
 
-# Step 6.5: Verify Outline VPN container is working
-echo "Starting Outline VPN container to verify functionality..."
-# Remove any existing container with the same name to avoid conflicts
+# Step 6.5: Verify Outline VPN container is working (ensure container is rewritten)
+echo "Verifying Outline VPN container functionality..."
+# Forcefully remove any existing container to ensure a fresh instance
 if sudo docker ps -a --filter "name=^${OUTLINE_CONTAINER_NAME}$" --format '{{.Names}}' | grep -q "${OUTLINE_CONTAINER_NAME}"; then
-  echo "Removing existing container ${OUTLINE_CONTAINER_NAME}..."
+  echo "Removing existing container ${OUTLINE_CONTAINER_NAME} to rewrite with fresh instance..."
   sudo docker rm -f "${OUTLINE_CONTAINER_NAME}" || {
     echo "Error: Failed to remove existing container ${OUTLINE_CONTAINER_NAME}."
     exit 1
   }
+else
+  echo "No existing ${OUTLINE_CONTAINER_NAME} container found. Proceeding with fresh container."
 fi
 
-# Run the Outline container in detached mode
-echo "Running Outline VPN container..."
+# Run a new Outline container in detached mode
+echo "Starting new Outline VPN container..."
 sudo docker run -d --name "${OUTLINE_CONTAINER_NAME}" \
   -p "${DOCKER_PORT}:${DOCKER_PORT}" \
   -p "${API_PORT}:${API_PORT}" \
@@ -135,7 +138,7 @@ if ! curl -s -o /dev/null -w "%{http_code}" "http://localhost:${API_PORT}" | gre
   exit 1
 fi
 
-# Additional VPN-specific check (e.g., verify management API returns valid response)
+# Additional VPN-specific check (verify management API returns valid response)
 echo "Verifying Outline VPN management API..."
 API_RESPONSE=$(curl -s "http://localhost:${API_PORT}/access-keys")
 if ! echo "${API_RESPONSE}" | grep -q "accessKeys"; then
