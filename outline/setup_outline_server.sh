@@ -12,6 +12,7 @@
 set -e
 
 # Variables
+TEMP_CONTAINER_NAME="shadowbox_temp"
 FILES_DIR="$(pwd)/files"  # Use absolute path for FILES_DIR
 CONFIG_DIR="${FILES_DIR}/config"
 PERSISTED_STATE_DIR="${FILES_DIR}/persisted-state"
@@ -30,6 +31,7 @@ UBUNTU_CODENAME=$(lsb_release -cs)
 ARCH=$(dpkg --print-architecture)
 OUTLINE_IMAGE_TAR="${FILES_DIR}/outline_server_image.tar"  # Store tar in FILES_DIR
 LOG_FILE="${FILES_DIR}/shadowbox_logs.txt"  # Log file for container logs
+
 
 # Step 1: Install prerequisites
 echo "Installing prerequisites..."
@@ -118,6 +120,8 @@ fi
 
 # Run Outline container temporarily to generate initial config, certificate, and state
 echo "Running temporary Outline container to initialize configuration and certificate..."
+# Run Outline container temporarily to generate initial config, certificate, and state
+echo "Running temporary Outline container to initialize configuration and certificate..."
 sudo docker run -d --name "${TEMP_CONTAINER_NAME}" \
   -p "${DOCKER_PORT}:${DOCKER_PORT}" \
   -p "${API_PORT}:${API_PORT}" \
@@ -127,10 +131,20 @@ sudo docker run -d --name "${TEMP_CONTAINER_NAME}" \
   -e "SB_PUBLIC_IP=${PUBLIC_IP}" \
   -e "SB_DEFAULT_SERVER_NAME=OutlineServer" \
   -e "SB_API_PREFIX=${API_PREFIX}" \
-  "${OUTLINE_IMAGE}" || {
-  echo "Error: Failed to start temporary Outline container."
+  "${OUTLINE_IMAGE}" > "${FILES_DIR}/docker_run_output.txt" 2>&1 || {
+  echo "Error: Failed to start temporary Outline container. Check logs for details."
+  cat "${FILES_DIR}/docker_run_output.txt"
+  if sudo docker ps -a --filter "name=^${TEMP_CONTAINER_NAME}$" --format '{{.Names}}' | grep -q "${TEMP_CONTAINER_NAME}"; then
+    echo "Container was created but may have failed. Inspecting..."
+    sudo docker logs "${TEMP_CONTAINER_NAME}" > "${FILES_DIR}/shadowbox_temp_logs.txt" 2>&1
+    cat "${FILES_DIR}/shadowbox_temp_logs.txt"
+    sudo docker inspect "${TEMP_CONTAINER_NAME}" > "${FILES_DIR}/shadowbox_temp_inspect.txt" 2>&1
+    cat "${FILES_DIR}/shadowbox_temp_inspect.txt"
+    sudo docker rm -f "${TEMP_CONTAINER_NAME}"
+  fi
   exit 1
 }
+rm -f "${FILES_DIR}/docker_run_output.txt"
 
 # Wait for container to initialize (up to 60 seconds)
 echo "Waiting for temporary container to initialize..."
