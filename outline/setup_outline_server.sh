@@ -93,9 +93,31 @@ fi
 # Generate a random API prefix (mimics Outline's random string for apiUrl)
 API_PREFIX=$(openssl rand -base64 12 | tr -dc 'a-zA-Z0-9' | head -c 16)
 
+# Trap to clean up temporary container on exit
+cleanup() {
+  if sudo docker ps -a --filter "name=^${TEMP_CONTAINER_NAME}$" --format '{{.Names}}' | grep -q "${TEMP_CONTAINER_NAME}"; then
+    echo "Cleaning up temporary container ${TEMP_CONTAINER_NAME}..."
+    sudo docker rm -f "${TEMP_CONTAINER_NAME}" || echo "Warning: Failed to clean up temporary container."
+  fi
+}
+trap cleanup EXIT
+
+# ... (other script content) ...
+
+# Remove existing temporary container if it exists
+if sudo docker ps -a --filter "name=^${TEMP_CONTAINER_NAME}$" --format '{{.Names}}' | grep -q "${TEMP_CONTAINER_NAME}"; then
+  echo "Removing existing temporary container ${TEMP_CONTAINER_NAME}..."
+  sudo docker rm -f "${TEMP_CONTAINER_NAME}" || {
+    echo "Error: Failed to remove existing temporary container."
+    sudo docker inspect "${TEMP_CONTAINER_NAME}" | grep -i "error"
+    exit 1
+  }
+else
+  echo "No existing ${TEMP_CONTAINER_NAME} container found."
+fi
+
 # Run Outline container temporarily to generate initial config, certificate, and state
 echo "Running temporary Outline container to initialize configuration and certificate..."
-TEMP_CONTAINER_NAME="shadowbox_temp"
 sudo docker run -d --name "${TEMP_CONTAINER_NAME}" \
   -p "${DOCKER_PORT}:${DOCKER_PORT}" \
   -p "${API_PORT}:${API_PORT}" \
