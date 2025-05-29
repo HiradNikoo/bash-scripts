@@ -68,7 +68,6 @@ sudo bash -c "cat > ${CONFIG_FILE} <<EOF
 {
   \"apiUrl\": \"http://0.0.0.0:${API_PORT}\",
   \"port\": ${DOCKER_PORT},
-  \"hostname\": \"0.0.0.0\"
 }
 EOF"
 sudo chown $(whoami):$(whoami) "${CONFIG_FILE}"  # Ensure user can read config file
