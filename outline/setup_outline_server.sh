@@ -64,21 +64,21 @@ sudo chown $(whoami):$(whoami) "${CONFIG_DIR}"  # Ensure user can write to confi
 echo "Generating sample configuration..."
 sudo bash -c "cat > ${CONFIG_FILE} <<EOF
 {
-  \"apiUrl\": \"https://localhost:${API_PORT}\",
+  \"apiUrl\": \"https://0.0.0.0:${API_PORT}\",
   \"port\": ${DOCKER_PORT},
-  \"hostname\": \"localhost\"
+  \"hostname\": \"0.0.0.0\"
 }
 EOF"
 sudo chown $(whoami):$(whoami) "${CONFIG_FILE}"  # Ensure user can read config file
 
-# Step 6.5: Verify Outline VPN container is working (ensure container is rewritten)
-echo "Verifying Outline VPN container functionality..."
-# Check if port 8081 is already in use
-if sudo netstat -tuln | grep ":${API_PORT}" > /dev/null; then
-  echo "Error: Port ${API_PORT} is already in use. Please free the port or choose a different one."
+# Verify configuration file exists and is readable
+if [ ! -f "${CONFIG_FILE}" ]; then
+  echo "Error: Configuration file ${CONFIG_FILE} was not created."
   exit 1
 fi
 
+# Step 6.5: Verify Outline VPN container is working (ensure container is rewritten)
+echo "Verifying Outline VPN container functionality..."
 # Forcefully remove any existing container to ensure a fresh instance
 if sudo docker ps -a --filter "name=^${OUTLINE_CONTAINER_NAME}$" --format '{{.Names}}' | grep -q "${OUTLINE_CONTAINER_NAME}"; then
   echo "Removing existing container ${OUTLINE_CONTAINER_NAME} to rewrite with fresh instance..."
@@ -90,26 +90,25 @@ else
   echo "No existing ${OUTLINE_CONTAINER_NAME} container found. Proceeding with fresh container."
 fi
 
-# Run a new Outline container in detached mode
+# Run a new Outline container in detached mode with host network
 echo "Starting new Outline VPN container..."
 sudo docker run -d --name "${OUTLINE_CONTAINER_NAME}" \
-  -p "${DOCKER_PORT}:${DOCKER_PORT}" \
-  -p "${API_PORT}:${API_PORT}" \
+  --network host \
   -v "${CONFIG_FILE}:/opt/outline/shadowbox_config.json" \
   "${OUTLINE_IMAGE}" || {
   echo "Error: Failed to start Outline container."
   exit 1
 }
 
-# Wait for the container to start (up to 60 seconds)
+# Wait for the container to start (up to 30 seconds)
 echo "Waiting for Outline container to start..."
-for i in {1..60}; do
+for i in {1..30}; do
   if sudo docker ps --filter "name=^${OUTLINE_CONTAINER_NAME}$" --filter "status=running" --format '{{.Names}}' | grep -q "${OUTLINE_CONTAINER_NAME}"; then
     echo "Outline container is running."
     break
   fi
-  if [ "$i" -eq 60 ]; then
-    echo "Error: Outline container failed to start within 60 seconds."
+  if [ "$i" -eq 30 ]; then
+    echo "Error: Outline container failed to start within 30 seconds."
     sudo docker logs "${OUTLINE_CONTAINER_NAME}"
     sudo docker rm -f "${OUTLINE_CONTAINER_NAME}"
     exit 1
@@ -135,13 +134,11 @@ if ! sudo netstat -tuln | grep ":${API_PORT}" > /dev/null; then
   exit 1
 fi
 
-# Test API accessibility (use HTTPS and capture response for debugging)
+# Test API accessibility (use 0.0.0.0 to match binding)
 echo "Testing Outline API accessibility..."
-HTTP_STATUS=$(curl -s -k -o /dev/null -w "%{http_code}" "https://localhost:${API_PORT}")
-if [ "${HTTP_STATUS}" != "200" ]; then
-  echo "Error: Outline API is not responding correctly on port ${API_PORT}. HTTP Status: ${HTTP_STATUS}"
-  API_RESPONSE=$(curl -s -k "https://localhost:${API_PORT}")
-  echo "API Response: ${API_RESPONSE}"
+HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "http://0.0.0.0:${API_PORT}")
+if [ "${HTTP_CODE}" != "200" ]; then
+  echo "Error: Outline API is not responding correctly on port ${API_PORT}. HTTP Code: ${HTTP_CODE}"
   sudo docker logs "${OUTLINE_CONTAINER_NAME}"
   sudo docker rm -f "${OUTLINE_CONTAINER_NAME}"
   exit 1
@@ -149,7 +146,7 @@ fi
 
 # Additional VPN-specific check (verify management API returns valid response)
 echo "Verifying Outline VPN management API..."
-API_RESPONSE=$(curl -s -k "https://localhost:${API_PORT}/access-keys")
+API_RESPONSE=$(curl -s "http://0.0.0.0:${API_PORT}/access-keys")
 if ! echo "${API_RESPONSE}" | grep -q "accessKeys"; then
   echo "Error: Outline VPN management API did not return expected response."
   echo "API Response: ${API_RESPONSE}"
