@@ -62,17 +62,81 @@ echo "Creating configuration directory..."
 sudo mkdir -p "${CONFIG_DIR}"
 sudo chown $(whoami):$(whoami) "${CONFIG_DIR}"  # Ensure user can write to config dir
 
-# Step 6: Generate sample configuration (use http to avoid SSL issues)
-echo "Generating sample configuration..."
-sudo bash -c "cat > ${CONFIG_FILE} <<EOF
-{
-  \"apiUrl\": \"http://0.0.0.0:${API_PORT}\",
-  \"port\": ${DOCKER_PORT},
-}
-EOF"
-sudo chown $(whoami):$(whoami) "${CONFIG_FILE}"  # Ensure user can read config file
+# Step 6: Generate sample configuration and initialize state
+echo "Generating sample configuration and initializing state..."
+sudo mkdir -p "${CONFIG_DIR}"
+sudo chown $(whoami):$(whoami) "${CONFIG_DIR}"
 
-# Step 6.5: Verify Outline VPN container is working (ensure container is rewritten)
+# Create persisted-state directory for Outline
+PERSISTED_STATE_DIR="/opt/outline/persisted-state"
+sudo mkdir -p "${PERSISTED_STATE_DIR}"
+sudo chown $(whoami):$(whoami) "${PERSISTED_STATE_DIR}"
+
+# Run Outline container temporarily to generate initial config and state
+echo "Running temporary Outline container to initialize configuration..."
+TEMP_CONTAINER_NAME="shadowbox_temp"
+sudo docker run -d --name "${TEMP_CONTAINER_NAME}" \
+  -p "${DOCKER_PORT}:${DOCKER_PORT}" \
+  -p "${API_PORT}:${API_PORT}" \
+  -v "${CONFIG_DIR}:/opt/outline/config" \
+  -v "${PERSISTED_STATE_DIR}:/root/shadowbox/persisted-state" \
+  "${OUTLINE_IMAGE}" || {
+  echo "Error: Failed to start temporary Outline container."
+  exit 1
+}
+
+# Wait for container to initialize (up to 60 seconds)
+echo "Waiting for temporary container to initialize..."
+for i in {1..60}; do
+  if sudo docker ps --filter "name=^${TEMP_CONTAINER_NAME}$" --filter "status=running" --format '{{.Names}}' | grep -q "${TEMP_CONTAINER_NAME}"; then
+    echo "Temporary container is running."
+    break
+  fi
+  if [ "$i" -eq 60 ]; then
+    echo "Error: Temporary container failed to start within 60 seconds."
+    sudo docker logs "${TEMP_CONTAINER_NAME}"
+    sudo docker rm -f "${TEMP_CONTAINER_NAME}"
+    exit 1
+  fi
+  sleep 1
+done
+
+# Wait for config file to be generated
+echo "Waiting for configuration file to be generated..."
+for i in {1..30}; do
+  if [ -f "${CONFIG_FILE}" ]; then
+    echo "Configuration file generated: ${CONFIG_FILE}"
+    break
+  fi
+  if [ "$i" -eq 30 ]; then
+    echo "Error: Configuration file ${CONFIG_FILE} was not generated within 30 seconds."
+    sudo docker logs "${TEMP_CONTAINER_NAME}"
+    sudo docker rm -f "${TEMP_CONTAINER_NAME}"
+    exit 1
+  fi
+  sleep 1
+done
+
+# Stop and remove temporary container
+echo "Stopping and removing temporary container..."
+sudo docker stop "${TEMP_CONTAINER_NAME}" || {
+  echo "Error: Failed to stop temporary container."
+  exit 1
+}
+sudo docker rm "${TEMP_CONTAINER_NAME}" || {
+  echo "Error: Failed to remove temporary container."
+  exit 1
+}
+
+# Ensure config file has required fields (minimal validation)
+echo "Validating configuration file..."
+if ! grep -q "apiUrl" "${CONFIG_FILE}" || ! grep -q "certSha256" "${CONFIG_FILE}"; then
+  echo "Error: Configuration file ${CONFIG_FILE} is missing required fields (apiUrl or certSha256)."
+  cat "${CONFIG_FILE}"
+  exit 1
+fi
+
+# Step 6.5: Verify Outline VPN container is working
 echo "Verifying Outline VPN container functionality..."
 # Create FILES_DIR early to ensure log file can be written
 echo "Creating output directory ${FILES_DIR}..."
@@ -82,38 +146,39 @@ if [ ! -d "${FILES_DIR}" ] || [ ! -w "${FILES_DIR}" ]; then
   exit 1
 fi
 
-# Check for port conflicts before starting container
+# Check for port conflicts
 echo "Checking for port conflicts on ${API_PORT}..."
 if sudo netstat -tuln | grep ":${API_PORT}" > /dev/null; then
-  echo "Error: Port ${API_PORT} is already in use by another process."
+  echo "Error: Port ${API_PORT} is already in use."
   sudo netstat -tulnp | grep ":${API_PORT}"
   exit 1
 fi
 echo "Port ${API_PORT} is free."
 
-# Forcefully remove any existing container to ensure a fresh instance
+# Remove existing container
 if sudo docker ps -a --filter "name=^${OUTLINE_CONTAINER_NAME}$" --format '{{.Names}}' | grep -q "${OUTLINE_CONTAINER_NAME}"; then
-  echo "Removing existing container ${OUTLINE_CONTAINER_NAME} to rewrite with fresh instance..."
+  echo "Removing existing container ${OUTLINE_CONTAINER_NAME}..."
   sudo docker rm -f "${OUTLINE_CONTAINER_NAME}" || {
-    echo "Error: Failed to remove existing container ${OUTLINE_CONTAINER_NAME}."
+    echo "Error: Failed to remove existing container."
     exit 1
   }
 else
-  echo "No existing ${OUTLINE_CONTAINER_NAME} container found. Proceeding with fresh container."
+  echo "No existing ${OUTLINE_CONTAINER_NAME} container found."
 fi
 
-# Run a new Outline container in detached mode
+# Run new Outline container
 echo "Starting new Outline VPN container..."
 sudo docker run -d --name "${OUTLINE_CONTAINER_NAME}" \
   -p "${DOCKER_PORT}:${DOCKER_PORT}" \
   -p "${API_PORT}:${API_PORT}" \
   -v "${CONFIG_FILE}:/opt/outline/shadowbox_config.json" \
+  -v "${PERSISTED_STATE_DIR}:/root/shadowbox/persisted-state" \
   "${OUTLINE_IMAGE}" || {
   echo "Error: Failed to start Outline container."
   exit 1
 }
 
-# Wait for the container to start (up to 60 seconds to account for slow startups)
+# Wait for container to start
 echo "Waiting for Outline container to start..."
 for i in {1..60}; do
   if sudo docker ps --filter "name=^${OUTLINE_CONTAINER_NAME}$" --filter "status=running" --format '{{.Names}}' | grep -q "${OUTLINE_CONTAINER_NAME}"; then
@@ -129,7 +194,7 @@ for i in {1..60}; do
   sleep 1
 done
 
-# Check container logs for errors
+# Check container logs
 echo "Checking container logs for errors..."
 sudo docker logs "${OUTLINE_CONTAINER_NAME}" > "${LOG_FILE}"
 if grep -i "error" "${LOG_FILE}"; then
@@ -140,7 +205,7 @@ if grep -i "error" "${LOG_FILE}"; then
 fi
 echo "No errors found in logs."
 
-# Verify API port is listening
+# Verify API port
 echo "Verifying API port ${API_PORT} is listening..."
 if ! sudo netstat -tuln | grep ":${API_PORT}" > /dev/null; then
   echo "Error: API port ${API_PORT} is not listening."
@@ -151,41 +216,42 @@ if ! sudo netstat -tuln | grep ":${API_PORT}" > /dev/null; then
 fi
 echo "API port ${API_PORT} is listening."
 
-# Test API accessibility (focus on http, add delay and verbose output)
+# Test API accessibility with retries
 echo "Testing Outline API accessibility..."
-# Wait briefly to ensure API is fully initialized
-sleep 5
-# Test HTTP with verbose output for debugging
-echo "Testing HTTP API..."
-HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:${API_PORT}" || echo "curl_failed")
-if [ "$HTTP_STATUS" = "curl_failed" ]; then
-  echo "Error: curl command failed for http://localhost:${API_PORT}"
-  curl -v "http://localhost:${API_PORT}" > "${FILES_DIR}/curl_http_output.txt" 2>&1
-  echo "curl output saved to ${FILES_DIR}/curl_http_output.txt"
-  cat "${FILES_DIR}/curl_http_output.txt"
-  echo "Container logs saved to ${LOG_FILE}"
-  cat "${LOG_FILE}"
-  echo "Container will remain running for debugging. Inspect with 'sudo docker logs shadowbox' or 'sudo docker exec -it shadowbox /bin/sh'."
-  exit 1
-fi
-if [ "$HTTP_STATUS" != "200" ]; then
-  echo "Error: Outline API returned non-200 status on port ${API_PORT} (HTTP: $HTTP_STATUS)."
-  curl -v "http://localhost:${API_PORT}" > "${FILES_DIR}/curl_http_output.txt" 2>&1
-  echo "curl output saved to ${FILES_DIR}/curl_http_output.txt"
-  cat "${FILES_DIR}/curl_http_output.txt"
-  echo "Container logs saved to ${LOG_FILE}"
-  cat "${LOG_FILE}"
-  echo "Container will remain running for debugging. Inspect with 'sudo docker logs shadowbox' or 'sudo docker exec -it shadowbox /bin/sh'."
-  exit 1
-fi
-echo "Outline API is accessible (HTTP: $HTTP_STATUS)."
+sleep 10  # Extended wait for API initialization
+for attempt in {1..3}; do
+  echo "Testing HTTP API (attempt ${attempt})..."
+  HTTP_STATUS=$(curl -s --connect-timeout 5 --max-time 10 -o /dev/null -w "%{http_code}" "http://localhost:${API_PORT}" || echo "curl_failed")
+  if [ "$HTTP_STATUS" = "curl_failed" ]; then
+    echo "Warning: curl command failed for http://localhost:${API_PORT} (attempt ${attempt})"
+    curl -v --connect-timeout 5 --max-time 10 "http://localhost:${API_PORT}" > "${FILES_DIR}/curl_http_output.txt" 2>&1
+    echo "curl output saved to ${FILES_DIR}/curl_http_output.txt"
+    cat "${FILES_DIR}/curl_http_output.txt"
+  elif [ "$HTTP_STATUS" != "200" ]; then
+    echo "Warning: Outline API returned non-200 status on port ${API_PORT} (HTTP: $HTTP_STATUS, attempt ${attempt})."
+    curl -v --connect-timeout 5 --max-time 10 "http://localhost:${API_PORT}" > "${FILES_DIR}/curl_http_output.txt" 2>&1
+    echo "curl output saved to ${FILES_DIR}/curl_http_output.txt"
+    cat "${FILES_DIR}/curl_http_output.txt"
+  else
+    echo "Outline API is accessible (HTTP: $HTTP_STATUS)."
+    break
+  fi
+  if [ "$attempt" -eq 3 ]; then
+    echo "Error: Outline API failed after 3 attempts."
+    echo "Container logs saved to ${LOG_FILE}"
+    cat "${LOG_FILE}"
+    echo "Container will remain running for debugging. Inspect with 'sudo docker logs shadowbox' or 'sudo docker exec -it shadowbox /bin/sh'."
+    exit 1
+  fi
+  sleep 5
+done
 
-# Additional VPN-specific check (verify management API returns valid response)
+# Verify management API
 echo "Verifying Outline VPN management API..."
-API_RESPONSE=$(curl -s "http://localhost:${API_PORT}/access-keys" || echo "curl_failed")
+API_RESPONSE=$(curl -s --connect-timeout 5 --max-time 10 "http://localhost:${API_PORT}/access-keys" || echo "curl_failed")
 if [ "$API_RESPONSE" = "curl_failed" ]; then
   echo "Error: curl command failed for http://localhost:${API_PORT}/access-keys"
-  curl -v "http://localhost:${API_PORT}/access-keys" > "${FILES_DIR}/curl_access_keys_output.txt" 2>&1
+  curl -v --connect-timeout 5 --max-time 10 "http://localhost:${API_PORT}/access-keys" > "${FILES_DIR}/curl_access_keys_output.txt" 2>&1
   echo "curl output saved to ${FILES_DIR}/curl_access_keys_output.txt"
   cat "${FILES_DIR}/curl_access_keys_output.txt"
   echo "Container logs saved to ${LOG_FILE}"
@@ -203,7 +269,7 @@ if ! echo "${API_RESPONSE}" | grep -q "accessKeys"; then
 fi
 echo "Outline VPN management API is functional."
 
-# Stop and remove the test container
+# Stop and remove test container
 echo "Stopping and removing test container..."
 sudo docker stop "${OUTLINE_CONTAINER_NAME}" || {
   echo "Error: Failed to stop Outline container."
