@@ -37,18 +37,23 @@ echo "=================== Contents of the unzipped bundle =================="
 ls -la
 echo "======================================================================"
 
-# Step 4: Install Docker from offline packages
-echo "Installing Docker from offline packages..."
-tar -xzvf "${DOCKER_OFFLINE_TAR}"
-sudo dpkg -i *.deb
-if ! sudo systemctl is-active --quiet docker; then
-  echo "Starting Docker service..."
-  sudo systemctl start docker || {
-    echo "Error: Failed to start Docker service. Check 'systemctl status docker' for details."
-    exit 1
-  }
+# Step 4: Check if Docker is installed, install if not
+echo "Checking for Docker installation..."
+if ! command -v docker &> /dev/null; then
+    echo "Docker not found, installing from offline packages..."
+    tar -xzvf "${DOCKER_OFFLINE_TAR}"
+    sudo dpkg -i *.deb
+    if ! sudo systemctl is-active --quiet docker; then
+      echo "Starting Docker service..."
+      sudo systemctl start docker || {
+        echo "Error: Failed to start Docker service. Check 'systemctl status docker' for details."
+        exit 1
+      }
+    fi
+    sudo systemctl enable docker
+else
+    echo "Docker is already installed."
 fi
-sudo systemctl enable docker
 
 # Step 5: Load Outline Server image
 echo "Loading Outline Server image..."
@@ -71,14 +76,24 @@ if [ -z "${SERVER_IP}" ]; then
 fi
 sudo sed -i "s/0.0.0.0/${SERVER_IP}/g" "${CONFIG_FILE}"
 
-# Step 9: Run Outline Server container
+# Step 9: Check for existing container and remove if found
+echo "Checking for existing Outline Server container..."
+if [ "$(sudo docker ps -a -q -f name=^/${OUTLINE_CONTAINER_NAME}$)" ]; then
+    echo "Existing container found with name ${OUTLINE_CONTAINER_NAME}. Removing it..."
+    sudo docker rm -f "${OUTLINE_CONTAINER_NAME}" || {
+        echo "Error: Failed to remove existing container."
+        exit 1
+    }
+fi
+
+# Step 10: Run Outline Server container
 echo "Starting Outline Server container..."
 sudo docker run --name "${OUTLINE_CONTAINER_NAME}" -d --restart=always \
   -p "${DOCKER_PORT}:8080" -p "${API_PORT}:8081" \
   -v "${CONFIG_FILE}:/root/shadowbox_config.json" \
   "${OUTLINE_IMAGE}"
 
-# Step 10: Clean up
+# Step 11: Clean up
 echo "Cleaning up..."
 rm -f outline_server_image.tar "${DOCKER_OFFLINE_TAR}" *.deb "${ZIP_BUNDLE}"
 
