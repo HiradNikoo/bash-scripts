@@ -152,28 +152,54 @@ if ! sudo netstat -tuln | grep ":${API_PORT}" > /dev/null; then
 fi
 echo "API port ${API_PORT} is listening."
 
-# Test API accessibility (try both http and https)
+# Test API accessibility (focus on http, add delay and verbose output)
 echo "Testing Outline API accessibility..."
-HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:${API_PORT}")
-HTTPS_STATUS=$(curl -k -s -o /dev/null -w "%{http_code}" "https://localhost:${API_PORT}")
-if [ "$HTTP_STATUS" != "200" ] && [ "$HTTPS_STATUS" != "200" ]; then
-  echo "Error: Outline API is not responding correctly on port ${API_PORT} (HTTP: $HTTP_STATUS, HTTPS: $HTTPS_STATUS)."
+# Wait briefly to ensure API is fully initialized
+sleep 5
+# Test HTTP with verbose output for debugging
+echo "Testing HTTP API..."
+HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:${API_PORT}" || echo "curl_failed")
+if [ "$HTTP_STATUS" = "curl_failed" ]; then
+  echo "Error: curl command failed for http://localhost:${API_PORT}"
+  curl -v "http://localhost:${API_PORT}" > "${FILES_DIR}/curl_http_output.txt" 2>&1
+  echo "curl output saved to ${FILES_DIR}/curl_http_output.txt"
+  cat "${FILES_DIR}/curl_http_output.txt"
   echo "Container logs saved to ${LOG_FILE}"
   cat "${LOG_FILE}"
-  sudo docker rm -f "${OUTLINE_CONTAINER_NAME}"
+  echo "Container will remain running for debugging. Inspect with 'sudo docker logs shadowbox' or 'sudo docker exec -it shadowbox /bin/sh'."
   exit 1
 fi
-echo "Outline API is accessible (HTTP: $HTTP_STATUS, HTTPS: $HTTPS_STATUS)."
+if [ "$HTTP_STATUS" != "200" ]; then
+  echo "Error: Outline API returned non-200 status on port ${API_PORT} (HTTP: $HTTP_STATUS)."
+  curl -v "http://localhost:${API_PORT}" > "${FILES_DIR}/curl_http_output.txt" 2>&1
+  echo "curl output saved to ${FILES_DIR}/curl_http_output.txt"
+  cat "${FILES_DIR}/curl_http_output.txt"
+  echo "Container logs saved to ${LOG_FILE}"
+  cat "${LOG_FILE}"
+  echo "Container will remain running for debugging. Inspect with 'sudo docker logs shadowbox' or 'sudo docker exec -it shadowbox /bin/sh'."
+  exit 1
+fi
+echo "Outline API is accessible (HTTP: $HTTP_STATUS)."
 
 # Additional VPN-specific check (verify management API returns valid response)
 echo "Verifying Outline VPN management API..."
-API_RESPONSE=$(curl -s "http://localhost:${API_PORT}/access-keys")
+API_RESPONSE=$(curl -s "http://localhost:${API_PORT}/access-keys" || echo "curl_failed")
+if [ "$API_RESPONSE" = "curl_failed" ]; then
+  echo "Error: curl command failed for http://localhost:${API_PORT}/access-keys"
+  curl -v "http://localhost:${API_PORT}/access-keys" > "${FILES_DIR}/curl_access_keys_output.txt" 2>&1
+  echo "curl output saved to ${FILES_DIR}/curl_access_keys_output.txt"
+  cat "${FILES_DIR}/curl_access_keys_output.txt"
+  echo "Container logs saved to ${LOG_FILE}"
+  cat "${LOG_FILE}"
+  echo "Container will remain running for debugging. Inspect with 'sudo docker logs shadowbox' or 'sudo docker exec -it shadowbox /bin/sh'."
+  exit 1
+fi
 if ! echo "${API_RESPONSE}" | grep -q "accessKeys"; then
   echo "Error: Outline VPN management API did not return expected response."
   echo "API Response: ${API_RESPONSE}"
   echo "Container logs saved to ${LOG_FILE}"
   cat "${LOG_FILE}"
-  sudo docker rm -f "${OUTLINE_CONTAINER_NAME}"
+  echo "Container will remain running for debugging. Inspect with 'sudo docker logs shadowbox' or 'sudo docker exec -it shadowbox /bin/sh'."
   exit 1
 fi
 echo "Outline VPN management API is functional."
