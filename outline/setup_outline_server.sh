@@ -437,15 +437,15 @@ echo "Testing Outline API accessibility..."
 sleep 10  # Extended wait for API initialization
 for attempt in {1..3}; do
   echo "Testing HTTPS API (attempt ${attempt})..."
-  HTTP_STATUS=$(curl -s --connect-timeout 5 --max-time 10 -k -o /dev/null -w "%{http_code}" "https://${PUBLIC_IP}:${API_PORT}/${API_PREFIX}" || echo "curl_failed")
+  HTTP_STATUS=$(curl -s --connect-timeout 5 --max-time 10 -k -o /dev/null -w "%{http_code}" "https://${PUBLIC_IP}:${API_PORT}/${API_PREFIX}/access-keys" || echo "curl_failed")
   if [ "$HTTP_STATUS" = "curl_failed" ]; then
-    echo "Warning: curl command failed for https://${PUBLIC_IP}:${API_PORT}/${API_PREFIX} (attempt ${attempt})"
-    curl -v --connect-timeout 5 --max-time 10 -k "https://${PUBLIC_IP}:${API_PORT}/${API_PREFIX}" > "${FILES_DIR}/curl_http_output.txt" 2>&1
+    echo "Warning: curl command failed for https://${PUBLIC_IP}:${API_PORT}/${API_PREFIX}/access-keys (attempt ${attempt})"
+    curl -v --connect-timeout 5 --max-time 10 -k "https://${PUBLIC_IP}:${API_PORT}/${API_PREFIX}/access-keys" > "${FILES_DIR}/curl_http_output.txt" 2>&1
     echo "curl output saved to ${FILES_DIR}/curl_http_output.txt"
     cat "${FILES_DIR}/curl_http_output.txt"
   elif [ "$HTTP_STATUS" != "200" ]; then
     echo "Warning: Outline API returned non-200 status on port ${API_PORT} (HTTP: $HTTP_STATUS, attempt ${attempt})."
-    curl -v --connect-timeout 5 --max-time 10 -k "https://${PUBLIC_IP}:${API_PORT}/${API_PREFIX}" > "${FILES_DIR}/curl_http_output.txt" 2>&1
+    curl -v --connect-timeout 5 --max-time 10 -k "https://${PUBLIC_IP}:${API_PORT}/${API_PREFIX}/access-keys" > "${FILES_DIR}/curl_http_output.txt" 2>&1
     echo "curl output saved to ${FILES_DIR}/curl_http_output.txt"
     cat "${FILES_DIR}/curl_http_output.txt"
   else
