@@ -1,56 +1,53 @@
 #!/bin/bash
 
 # Script to set up Outline Server and Docker offline installer, then zip them
-# Run on the first Ubuntu server with internet access
+# Run on the first Ubuntu server to generate configuration files and certificates
 # Creates a 'files' directory in the current working directory for output
-# Verifies Outline VPN container is running and functional before exporting image
-# Ensures container is rewritten on rerun by removing existing container
-# Handles port conflicts and logs detailed errors
-# Generates self-signed certificate and certSha256 using Shadowbox or fallback
+# Verifies Outline VPN container functionality before exporting image
+# Generates self-signed certificate and certSha256 if not provided by Shadowbox
+# Handles port conflicts and logs detailed diagnostics
 
 # Exit on error
 set -e
 
 # Variables
 FILES_DIR="$(pwd)/files"  # Use absolute path for FILES_DIR
-CONFIG_DIR="${FILES_DIR}/config"
+CONFIG_DIR="${FILES_DIR}"  # Store config directly in FILES_DIR
 PERSISTED_STATE_DIR="${FILES_DIR}/persisted-state"
+CONFIG_FILE="${CONFIG_DIR}/config.json"
 ZIP_OUTPUT="${FILES_DIR}/outline_docker_bundle.zip"
-DOCKER_PORT="8080"
-API_PORT="8081"
-CONFIG_FILE="${CONFIG_DIR}/shadowbox_config.json"
+DOCKER_PORT="8090"
+API_PORT="0"  # Let Shadowbox choose a random port
 CERT_DIR="${PERSISTED_STATE_DIR}"
 CERT_FILE="${CERT_DIR}/shadowbox.crt"
 KEY_FILE="${CERT_DIR}/shadowbox.key"
-ACCESS_FILE="${FILES_DIR}/access.txt"
-DOCKER_OFFLINE_DIR="/tmp/docker_offline"
-DOCKER_OFFLINE_TAR="docker_offline.tar.gz"
+ACCESS_FILE="${FILES_DIR}/access.json"
+DOCKER_OFFLINE_DIR="/tmp/docker_offline_files"
+DOCKER_OFFLINE_TAR="docker_offline_files.tar.gz"
 OUTLINE_IMAGE="quay.io/outline/shadowbox:stable"
 OUTLINE_CONTAINER_NAME="shadowbox"
 UBUNTU_CODENAME=$(lsb_release -cs)
 ARCH=$(dpkg --print-architecture)
-OUTLINE_IMAGE_TAR="${FILES_DIR}/outline_server_image.tar"  # Store tar in FILES_DIR
-LOG_FILE="${FILES_DIR}/shadowbox_logs.txt"  # Log file for container logs
+OUTLINE_IMAGE_TAR="${FILES_DIR}/outline_image.tar.gz"
+LOG_FILE="${FILES_DIR}/shadowbox_logs.txt"
 
 # Step 1: Install prerequisites
 echo "Installing prerequisites..."
 sudo apt-get update
-sudo apt-get install -y ca-certificates curl unzip wget apt-transport-https gnupg lsb-release zip net-tools openssl
+sudo apt-get install -y ca-certificates curl unzip wget apt-transport-https gnupg lsb-release zip net-tools openssl jq
 
 # Step 2: Set up Docker repository
 echo "Setting up Docker repository..."
 sudo install -m 0755 -d /etc/apt/keyrings
 [ -f /etc/apt/keyrings/docker.gpg ] && sudo rm /etc/apt/keyrings/docker.gpg
-curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-sudo chmod a+r /etc/apt/keyrings/docker.gpg
-echo "deb [arch=${ARCH} signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu ${UBUNTU_CODENAME} stable" | \
-  sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo apt-key add -
+echo "deb [arch=${ARCH} signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu ${UBUNTU_CODENAME} stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
 sudo apt-get update
 
 # Step 3: Install Docker
 echo "Installing Docker..."
-sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-if ! sudo systemctl is-active --quiet docker; then
+sudo apt-get install -y docker.io docker-compose
+if ! systemctl is-active --quiet docker; then
   echo "Starting Docker service..."
   sudo systemctl start docker || {
     echo "Error: Failed to start Docker service. Check 'systemctl status docker' for details."
@@ -71,7 +68,7 @@ if [ ! -d "${FILES_DIR}" ] || [ ! -w "${FILES_DIR}" ]; then
   exit 1
 fi
 
-# Step 6: Generate sample configuration, certificate, and certSha256
+# Step 6: Generate configuration, certificate, and certSha256
 echo "Creating configuration and persisted-state directories..."
 sudo mkdir -p "${CONFIG_DIR}" "${PERSISTED_STATE_DIR}"
 sudo chown $(whoami):$(whoami) "${CONFIG_DIR}" "${PERSISTED_STATE_DIR}"
@@ -87,7 +84,7 @@ rm -f "${CONFIG_DIR}/test_write"
 # Get public IP
 PUBLIC_IP=$(curl -s https://api.ipify.org || echo "unknown")
 if [ "$PUBLIC_IP" = "unknown" ]; then
-  echo "Warning: Could not determine public IP. Please set SB_PUBLIC_IP manually."
+  echo "Warning: Could not determine public IP. Attempting to use local IP..."
   PUBLIC_IP=$(ip addr show | grep 'inet ' | grep -v '127.0.0.1' | awk '{print $2}' | cut -d'/' -f1 | head -n 1)
   if [ -z "$PUBLIC_IP" ]; then
     echo "Error: Could not determine local IP. Please set PUBLIC_IP manually."
@@ -96,22 +93,16 @@ if [ "$PUBLIC_IP" = "unknown" ]; then
 fi
 echo "Using PUBLIC_IP: ${PUBLIC_IP}"
 
-# Generate a random API prefix
-API_PREFIX=$(openssl rand -base64 12 | tr -dc 'a-zA-Z0-9' | head -c 16)
-echo "Using API_PREFIX: ${API_PREFIX}"
-
 # Run Outline container temporarily to generate initial config, certificate, and state
 echo "Running temporary Outline container to initialize configuration and certificate..."
 TEMP_CONTAINER_NAME="shadowbox_temp"
 sudo docker run -d --name "${TEMP_CONTAINER_NAME}" \
-  -p "${DOCKER_PORT}:${DOCKER_PORT}" \
-  -p "${API_PORT}:${API_PORT}" \
-  -v "${CONFIG_FILE}:/opt/outline/shadowbox_config.json" \
+  -p "${DOCKER_PORT}:8090" \
+  -p "${API_PORT}:0" \
+  -v "${CONFIG_FILE}:/root/shadowbox/persisted-state/shadowbox_config.json" \
   -v "${PERSISTED_STATE_DIR}:/root/shadowbox/persisted-state" \
-  -e "SB_API_PORT=${API_PORT}" \
   -e "SB_PUBLIC_IP=${PUBLIC_IP}" \
   -e "SB_DEFAULT_SERVER_NAME=OutlineServer" \
-  -e "SB_API_PREFIX=${API_PREFIX}" \
   "${OUTLINE_IMAGE}" || {
   echo "Error: Failed to start temporary Outline container."
   exit 1
@@ -154,13 +145,32 @@ if [ "$CONFIG_GENERATED" = false ]; then
   echo "Creating default configuration as fallback..."
   cat << EOF > "${CONFIG_FILE}"
 {
-  "apiUrl": "https://${PUBLIC_IP}:${API_PORT}/${API_PREFIX}",
+  "apiUrl": "https://${PUBLIC_IP}:8081",
   "certSha256": "placeholder-cert-sha256",
   "hostname": "$(hostname)",
-  "port": ${API_PORT}
+  "port": 8081
 }
 EOF
   echo "Default configuration created."
+fi
+
+# Extract API port and prefix from configuration or logs
+echo "Extracting API port and prefix..."
+if [ "$CONFIG_GENERATED" = true ]; then
+  API_URL=$(jq -r '.apiUrl' "${CONFIG_FILE}" 2>/dev/null || echo "")
+  if [ -n "$API_URL" ]; then
+    API_PORT=$(echo "$API_URL" | sed -E 's|https?://[^:]+:([0-9]+).*|\1|' || echo "8081")
+    API_PREFIX=$(echo "$API_URL" | sed -E 's|https?://[^/]+/(.+)|\1|' || echo "")
+    echo "Extracted API_PORT: ${API_PORT}"
+    echo "Extracted API_PREFIX: ${API_PREFIX}"
+  else
+    echo "Warning: Could not extract apiUrl from ${CONFIG_FILE}. Using default port."
+    API_PORT="8081"
+    API_PREFIX=""
+  fi
+else
+  API_PORT="8081"
+  API_PREFIX=""
 fi
 
 # Extract certificate from persisted state or generate fallback
@@ -238,9 +248,11 @@ fi
 
 # Save access information for Outline Manager
 echo "Saving access information to ${ACCESS_FILE}..."
+API_URL="https://${PUBLIC_IP}:${API_PORT}"
+[ -n "$API_PREFIX" ] && API_URL="${API_URL}/${API_PREFIX}"
 cat << EOF > "${ACCESS_FILE}"
 {
-  "apiUrl": "https://${PUBLIC_IP}:${API_PORT}/${API_PREFIX}",
+  "apiUrl": "${API_URL}",
   "certSha256": "${CERT_SHA256}"
 }
 EOF
@@ -291,9 +303,9 @@ echo "Starting new Outline VPN container..."
 CERT_ENV=""
 [ -f "${KEY_FILE}" ] && CERT_ENV="-e SB_PRIVATE_KEY_FILE=/opt/outline/shadowbox.key -v ${KEY_FILE}:/opt/outline/shadowbox.key"
 sudo docker run -d --name "${OUTLINE_CONTAINER_NAME}" \
-  -p "${DOCKER_PORT}:${DOCKER_PORT}" \
+  -p "${DOCKER_PORT}:8090" \
   -p "${API_PORT}:${API_PORT}" \
-  -v "${CONFIG_FILE}:/opt/outline/shadowbox_config.json" \
+  -v "${CONFIG_FILE}:/root/shadowbox/persisted-state/shadowbox_config.json" \
   -v "${PERSISTED_STATE_DIR}:/root/shadowbox/persisted-state" \
   -v "${CERT_FILE}:/opt/outline/shadowbox.crt" \
   -e "SB_CERTIFICATE_FILE=/opt/outline/shadowbox.crt" \
@@ -345,19 +357,31 @@ echo "API port ${API_PORT} is listening."
 # Test API accessibility with retries
 echo "Testing Outline API accessibility..."
 sleep 10  # Extended wait for API initialization
+API_TEST_URL="https://${PUBLIC_IP}:${API_PORT}"
+[ -n "$API_PREFIX" ] && API_TEST_URL="${API_TEST_URL}/${API_PREFIX}"
 for attempt in {1..3}; do
-  echo "Testing HTTPS API (attempt ${attempt})..."
-  HTTP_STATUS=$(curl -s --connect-timeout 5 --max-time 10 -k -o /dev/null -w "%{http_code}" "https://${PUBLIC_IP}:${API_PORT}/${API_PREFIX}" || echo "curl_failed")
+  echo "Testing HTTPS API at ${API_TEST_URL} (attempt ${attempt})..."
+  HTTP_STATUS=$(curl -s --connect-timeout 5 --max-time 10 -k -o /dev/null -w "%{http_code}" "${API_TEST_URL}" || echo "curl_failed")
   if [ "$HTTP_STATUS" = "curl_failed" ]; then
-    echo "Warning: curl command failed for https://${PUBLIC_IP}:${API_PORT}/${API_PREFIX} (attempt ${attempt})"
-    curl -v --connect-timeout 5 --max-time 10 -k "https://${PUBLIC_IP}:${API_PORT}/${API_PREFIX}" > "${FILES_DIR}/curl_http_output.txt" 2>&1
+    echo "Warning: curl command failed for ${API_TEST_URL} (attempt ${attempt})"
+    curl -v --connect-timeout 5 --max-time 10 -k "${API_TEST_URL}" > "${FILES_DIR}/curl_http_output.txt" 2>&1
     echo "curl output saved to ${FILES_DIR}/curl_http_output.txt"
     cat "${FILES_DIR}/curl_http_output.txt"
   elif [ "$HTTP_STATUS" != "200" ]; then
-    echo "Warning: Outline API returned non-200 status on port ${API_PORT} (HTTP: $HTTP_STATUS, attempt ${attempt})."
-    curl -v --connect-timeout 5 --max-time 10 -k "https://${PUBLIC_IP}:${API_PORT}/${API_PREFIX}" > "${FILES_DIR}/curl_http_output.txt" 2>&1
+    echo "Warning: Outline API returned non-200 status (HTTP: $HTTP_STATUS, attempt ${attempt})."
+    curl -v --connect-timeout 5 --max-time 10 -k "${API_TEST_URL}" > "${FILES_DIR}/curl_http_output.txt" 2>&1
     echo "curl output saved to ${FILES_DIR}/curl_http_output.txt"
     cat "${FILES_DIR}/curl_http_output.txt"
+    # Try base URL as fallback
+    BASE_URL="https://${PUBLIC_IP}:${API_PORT}"
+    echo "Trying base URL ${BASE_URL}..."
+    BASE_STATUS=$(curl -s --connect-timeout 5 --max-time 10 -k -o /dev/null -w "%{http_code}" "${BASE_URL}" || echo "curl_failed")
+    if [ "$BASE_STATUS" = "200" ]; then
+      echo "Base URL ${BASE_URL} is accessible. Updating API_URL."
+      API_URL="${BASE_URL}"
+      API_PREFIX=""
+      break
+    fi
   else
     echo "Outline API is accessible (HTTP: $HTTP_STATUS)."
     break
@@ -374,10 +398,12 @@ done
 
 # Verify management API
 echo "Verifying Outline VPN management API..."
-API_RESPONSE=$(curl -s --connect-timeout 5 --max-time 10 -k "https://${PUBLIC_IP}:${API_PORT}/${API_PREFIX}/access-keys" || echo "curl_failed")
+MANAGEMENT_URL="${API_URL}/access-keys"
+echo "Testing management API at ${MANAGEMENT_URL}..."
+API_RESPONSE=$(curl -s --connect-timeout 5 --max-time 10 -k "${MANAGEMENT_URL}" || echo "curl_failed")
 if [ "$API_RESPONSE" = "curl_failed" ]; then
-  echo "Error: curl command failed for https://${PUBLIC_IP}:${API_PORT}/${API_PREFIX}/access-keys"
-  curl -v --connect-timeout 5 --max-time 10 -k "https://${PUBLIC_IP}:${API_PORT}/${API_PREFIX}/access-keys" > "${FILES_DIR}/curl_access_keys_output.txt" 2>&1
+  echo "Error: curl command failed for ${MANAGEMENT_URL}"
+  curl -v --connect-timeout 5 --max-time 10 -k "${MANAGEMENT_URL}" > "${FILES_DIR}/curl_access_keys_output.txt" 2>&1
   echo "curl output saved to ${FILES_DIR}/curl_access_keys_output.txt"
   cat "${FILES_DIR}/curl_access_keys_output.txt"
   echo "Container logs saved to ${LOG_FILE}"
