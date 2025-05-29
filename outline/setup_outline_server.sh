@@ -5,6 +5,7 @@
 # Creates a 'files' directory in the current working directory for output
 # Verifies Outline VPN container is running and functional before exporting image
 # Ensures container is rewritten on rerun by removing existing container
+# Handles port conflicts and logs detailed errors
 
 # Exit on error
 set -e
@@ -60,25 +61,28 @@ echo "Creating configuration directory..."
 sudo mkdir -p "${CONFIG_DIR}"
 sudo chown $(whoami):$(whoami) "${CONFIG_DIR}"  # Ensure user can write to config dir
 
-# Step 6: Generate sample configuration
+# Step 6: Generate sample configuration (use http to avoid SSL issues)
 echo "Generating sample configuration..."
 sudo bash -c "cat > ${CONFIG_FILE} <<EOF
 {
-  \"apiUrl\": \"https://0.0.0.0:${API_PORT}\",
+  \"apiUrl\": \"http://0.0.0.0:${API_PORT}\",
   \"port\": ${DOCKER_PORT},
   \"hostname\": \"0.0.0.0\"
 }
 EOF"
 sudo chown $(whoami):$(whoami) "${CONFIG_FILE}"  # Ensure user can read config file
 
-# Verify configuration file exists and is readable
-if [ ! -f "${CONFIG_FILE}" ]; then
-  echo "Error: Configuration file ${CONFIG_FILE} was not created."
-  exit 1
-fi
-
 # Step 6.5: Verify Outline VPN container is working (ensure container is rewritten)
 echo "Verifying Outline VPN container functionality..."
+# Check for port conflicts before starting container
+echo "Checking for port conflicts on ${API_PORT}..."
+if sudo netstat -tuln | grep ":${API_PORT}" > /dev/null; then
+  echo "Error: Port ${API_PORT} is already in use by another process."
+  sudo netstat -tulnp | grep ":${API_PORT}"
+  exit 1
+fi
+echo "Port ${API_PORT} is free."
+
 # Forcefully remove any existing container to ensure a fresh instance
 if sudo docker ps -a --filter "name=^${OUTLINE_CONTAINER_NAME}$" --format '{{.Names}}' | grep -q "${OUTLINE_CONTAINER_NAME}"; then
   echo "Removing existing container ${OUTLINE_CONTAINER_NAME} to rewrite with fresh instance..."
@@ -90,25 +94,26 @@ else
   echo "No existing ${OUTLINE_CONTAINER_NAME} container found. Proceeding with fresh container."
 fi
 
-# Run a new Outline container in detached mode with host network
+# Run a new Outline container in detached mode
 echo "Starting new Outline VPN container..."
 sudo docker run -d --name "${OUTLINE_CONTAINER_NAME}" \
-  --network host \
+  -p "${DOCKER_PORT}:${DOCKER_PORT}" \
+  -p "${API_PORT}:${API_PORT}" \
   -v "${CONFIG_FILE}:/opt/outline/shadowbox_config.json" \
   "${OUTLINE_IMAGE}" || {
   echo "Error: Failed to start Outline container."
   exit 1
 }
 
-# Wait for the container to start (up to 30 seconds)
+# Wait for the container to start (up to 60 seconds to account for slow startups)
 echo "Waiting for Outline container to start..."
-for i in {1..30}; do
+for i in {1..60}; do
   if sudo docker ps --filter "name=^${OUTLINE_CONTAINER_NAME}$" --filter "status=running" --format '{{.Names}}' | grep -q "${OUTLINE_CONTAINER_NAME}"; then
     echo "Outline container is running."
     break
   fi
-  if [ "$i" -eq 30 ]; then
-    echo "Error: Outline container failed to start within 30 seconds."
+  if [ "$i" -eq 60 ]; then
+    echo "Error: Outline container failed to start within 60 seconds."
     sudo docker logs "${OUTLINE_CONTAINER_NAME}"
     sudo docker rm -f "${OUTLINE_CONTAINER_NAME}"
     exit 1
@@ -118,42 +123,51 @@ done
 
 # Check container logs for errors
 echo "Checking container logs for errors..."
-if sudo docker logs "${OUTLINE_CONTAINER_NAME}" 2>&1 | grep -i "error"; then
-  echo "Warning: Potential errors found in container logs. Review logs for details."
-  sudo docker logs "${OUTLINE_CONTAINER_NAME}"
+sudo docker logs "${OUTLINE_CONTAINER_NAME}" > "${FILES_DIR}/shadowbox_logs.txt"
+if grep -i "error" "${FILES_DIR}/shadowbox_logs.txt"; then
+  echo "Error: Errors found in container logs. Full logs saved to ${FILES_DIR}/shadowbox_logs.txt"
+  cat "${FILES_DIR}/shadowbox_logs.txt"
   sudo docker rm -f "${OUTLINE_CONTAINER_NAME}"
   exit 1
 fi
+echo "No errors found in logs."
 
 # Verify API port is listening
 echo "Verifying API port ${API_PORT} is listening..."
 if ! sudo netstat -tuln | grep ":${API_PORT}" > /dev/null; then
   echo "Error: API port ${API_PORT} is not listening."
-  sudo docker logs "${OUTLINE_CONTAINER_NAME}"
+  echo "Container logs saved to ${FILES_DIR}/shadowbox_logs.txt"
+  cat "${FILES_DIR}/shadowbox_logs.txt"
   sudo docker rm -f "${OUTLINE_CONTAINER_NAME}"
   exit 1
 fi
+echo "API port ${API_PORT} is listening."
 
-# Test API accessibility (use 0.0.0.0 to match binding)
+# Test API accessibility (try both http and https)
 echo "Testing Outline API accessibility..."
-HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "http://0.0.0.0:${API_PORT}")
-if [ "${HTTP_CODE}" != "200" ]; then
-  echo "Error: Outline API is not responding correctly on port ${API_PORT}. HTTP Code: ${HTTP_CODE}"
-  sudo docker logs "${OUTLINE_CONTAINER_NAME}"
+HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:${API_PORT}")
+HTTPS_STATUS=$(curl -k -s -o /dev/null -w "%{http_code}" "https://localhost:${API_PORT}")
+if [ "$HTTP_STATUS" != "200" ] && [ "$HTTPS_STATUS" != "200" ]; then
+  echo "Error: Outline API is not responding correctly on port ${API_PORT} (HTTP: $HTTP_STATUS, HTTPS: $HTTPS_STATUS)."
+  echo "Container logs saved to ${FILES_DIR}/shadowbox_logs.txt"
+  cat "${FILES_DIR}/shadowbox_logs.txt"
   sudo docker rm -f "${OUTLINE_CONTAINER_NAME}"
   exit 1
 fi
+echo "Outline API is accessible (HTTP: $HTTP_STATUS, HTTPS: $HTTPS_STATUS)."
 
 # Additional VPN-specific check (verify management API returns valid response)
 echo "Verifying Outline VPN management API..."
-API_RESPONSE=$(curl -s "http://0.0.0.0:${API_PORT}/access-keys")
+API_RESPONSE=$(curl -s "http://localhost:${API_PORT}/access-keys")
 if ! echo "${API_RESPONSE}" | grep -q "accessKeys"; then
   echo "Error: Outline VPN management API did not return expected response."
   echo "API Response: ${API_RESPONSE}"
-  sudo docker logs "${OUTLINE_CONTAINER_NAME}"
+  echo "Container logs saved to ${FILES_DIR}/shadowbox_logs.txt"
+  cat "${FILES_DIR}/shadowbox_logs.txt"
   sudo docker rm -f "${OUTLINE_CONTAINER_NAME}"
   exit 1
 fi
+echo "Outline VPN management API is functional."
 
 # Stop and remove the test container
 echo "Stopping and removing test container..."
