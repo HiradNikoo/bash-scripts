@@ -64,15 +64,21 @@ sudo chown $(whoami):$(whoami) "${CONFIG_DIR}"  # Ensure user can write to confi
 echo "Generating sample configuration..."
 sudo bash -c "cat > ${CONFIG_FILE} <<EOF
 {
-  \"apiUrl\": \"https://0.0.0.0:${API_PORT}\",
+  \"apiUrl\": \"https://localhost:${API_PORT}\",
   \"port\": ${DOCKER_PORT},
-  \"hostname\": \"0.0.0.0\"
+  \"hostname\": \"localhost\"
 }
 EOF"
 sudo chown $(whoami):$(whoami) "${CONFIG_FILE}"  # Ensure user can read config file
 
 # Step 6.5: Verify Outline VPN container is working (ensure container is rewritten)
 echo "Verifying Outline VPN container functionality..."
+# Check if port 8081 is already in use
+if sudo netstat -tuln | grep ":${API_PORT}" > /dev/null; then
+  echo "Error: Port ${API_PORT} is already in use. Please free the port or choose a different one."
+  exit 1
+fi
+
 # Forcefully remove any existing container to ensure a fresh instance
 if sudo docker ps -a --filter "name=^${OUTLINE_CONTAINER_NAME}$" --format '{{.Names}}' | grep -q "${OUTLINE_CONTAINER_NAME}"; then
   echo "Removing existing container ${OUTLINE_CONTAINER_NAME} to rewrite with fresh instance..."
@@ -95,15 +101,15 @@ sudo docker run -d --name "${OUTLINE_CONTAINER_NAME}" \
   exit 1
 }
 
-# Wait for the container to start (up to 30 seconds)
+# Wait for the container to start (up to 60 seconds)
 echo "Waiting for Outline container to start..."
-for i in {1..30}; do
+for i in {1..60}; do
   if sudo docker ps --filter "name=^${OUTLINE_CONTAINER_NAME}$" --filter "status=running" --format '{{.Names}}' | grep -q "${OUTLINE_CONTAINER_NAME}"; then
     echo "Outline container is running."
     break
   fi
-  if [ "$i" -eq 30 ]; then
-    echo "Error: Outline container failed to start within 30 seconds."
+  if [ "$i" -eq 60 ]; then
+    echo "Error: Outline container failed to start within 60 seconds."
     sudo docker logs "${OUTLINE_CONTAINER_NAME}"
     sudo docker rm -f "${OUTLINE_CONTAINER_NAME}"
     exit 1
@@ -129,10 +135,13 @@ if ! sudo netstat -tuln | grep ":${API_PORT}" > /dev/null; then
   exit 1
 fi
 
-# Test API accessibility (basic check)
+# Test API accessibility (use HTTPS and capture response for debugging)
 echo "Testing Outline API accessibility..."
-if ! curl -s -o /dev/null -w "%{http_code}" "http://localhost:${API_PORT}" | grep -q "200"; then
-  echo "Error: Outline API is not responding correctly on port ${API_PORT}."
+HTTP_STATUS=$(curl -s -k -o /dev/null -w "%{http_code}" "https://localhost:${API_PORT}")
+if [ "${HTTP_STATUS}" != "200" ]; then
+  echo "Error: Outline API is not responding correctly on port ${API_PORT}. HTTP Status: ${HTTP_STATUS}"
+  API_RESPONSE=$(curl -s -k "https://localhost:${API_PORT}")
+  echo "API Response: ${API_RESPONSE}"
   sudo docker logs "${OUTLINE_CONTAINER_NAME}"
   sudo docker rm -f "${OUTLINE_CONTAINER_NAME}"
   exit 1
@@ -140,7 +149,7 @@ fi
 
 # Additional VPN-specific check (verify management API returns valid response)
 echo "Verifying Outline VPN management API..."
-API_RESPONSE=$(curl -s "http://localhost:${API_PORT}/access-keys")
+API_RESPONSE=$(curl -s -k "https://localhost:${API_PORT}/access-keys")
 if ! echo "${API_RESPONSE}" | grep -q "accessKeys"; then
   echo "Error: Outline VPN management API did not return expected response."
   echo "API Response: ${API_RESPONSE}"
