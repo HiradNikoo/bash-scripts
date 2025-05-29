@@ -1,53 +1,56 @@
 #!/bin/bash
 
 # Script to set up Outline Server and Docker offline installer, then zip them
-# Run on the first Ubuntu server to generate configuration files and certificates
+# Run on the first Ubuntu server with internet access
 # Creates a 'files' directory in the current working directory for output
-# Verifies Outline VPN container functionality before exporting image
-# Generates self-signed certificate and certSha256 if not provided by Shadowbox
-# Handles port conflicts and logs detailed diagnostics
+# Verifies Outline VPN container is running and functional before exporting image
+# Ensures container is rewritten on rerun by removing existing container
+# Handles port conflicts and logs detailed errors
+# Generates self-signed certificate and certSha256 using Shadowbox or fallback
 
 # Exit on error
 set -e
 
 # Variables
 FILES_DIR="$(pwd)/files"  # Use absolute path for FILES_DIR
-CONFIG_DIR="${FILES_DIR}"  # Store config directly in FILES_DIR
+CONFIG_DIR="${FILES_DIR}/config"
 PERSISTED_STATE_DIR="${FILES_DIR}/persisted-state"
-CONFIG_FILE="${CONFIG_DIR}/config.json"
 ZIP_OUTPUT="${FILES_DIR}/outline_docker_bundle.zip"
-DOCKER_PORT="8090"
-API_PORT="0"  # Let Shadowbox choose a random port
+DOCKER_PORT="8080"
+API_PORT="8081"
+CONFIG_FILE="${CONFIG_DIR}/shadowbox_config.json"
 CERT_DIR="${PERSISTED_STATE_DIR}"
 CERT_FILE="${CERT_DIR}/shadowbox.crt"
 KEY_FILE="${CERT_DIR}/shadowbox.key"
-ACCESS_FILE="${FILES_DIR}/access.json"
-DOCKER_OFFLINE_DIR="/tmp/docker_offline_files"
-DOCKER_OFFLINE_TAR="docker_offline_files.tar.gz"
+ACCESS_FILE="${FILES_DIR}/access.txt"
+DOCKER_OFFLINE_DIR="/tmp/docker_offline"
+DOCKER_OFFLINE_TAR="docker_offline.tar.gz"
 OUTLINE_IMAGE="quay.io/outline/shadowbox:stable"
 OUTLINE_CONTAINER_NAME="shadowbox"
 UBUNTU_CODENAME=$(lsb_release -cs)
 ARCH=$(dpkg --print-architecture)
-OUTLINE_IMAGE_TAR="${FILES_DIR}/outline_image.tar.gz"
-LOG_FILE="${FILES_DIR}/shadowbox_logs.txt"
+OUTLINE_IMAGE_TAR="${FILES_DIR}/outline_server_image.tar"  # Store tar in FILES_DIR
+LOG_FILE="${FILES_DIR}/shadowbox_logs.txt"  # Log file for container logs
 
 # Step 1: Install prerequisites
 echo "Installing prerequisites..."
 sudo apt-get update
-sudo apt-get install -y ca-certificates curl unzip wget apt-transport-https gnupg lsb-release zip net-tools openssl jq
+sudo apt-get install -y ca-certificates curl unzip wget apt-transport-https gnupg lsb-release zip net-tools openssl
 
 # Step 2: Set up Docker repository
 echo "Setting up Docker repository..."
 sudo install -m 0755 -d /etc/apt/keyrings
 [ -f /etc/apt/keyrings/docker.gpg ] && sudo rm /etc/apt/keyrings/docker.gpg
-curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo apt-key add -
-echo "deb [arch=${ARCH} signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu ${UBUNTU_CODENAME} stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+sudo chmod a+r /etc/apt/keyrings/docker.gpg
+echo "deb [arch=${ARCH} signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu ${UBUNTU_CODENAME} stable" | \
+  sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
 sudo apt-get update
 
 # Step 3: Install Docker
 echo "Installing Docker..."
-sudo apt-get install -y docker.io docker-compose
-if ! systemctl is-active --quiet docker; then
+sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+if ! sudo systemctl is-active --quiet docker; then
   echo "Starting Docker service..."
   sudo systemctl start docker || {
     echo "Error: Failed to start Docker service. Check 'systemctl status docker' for details."
