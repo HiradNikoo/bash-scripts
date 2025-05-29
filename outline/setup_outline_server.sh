@@ -24,6 +24,7 @@ OUTLINE_CONTAINER_NAME="shadowbox"
 UBUNTU_CODENAME=$(lsb_release -cs)
 ARCH=$(dpkg --print-architecture)
 OUTLINE_IMAGE_TAR="${FILES_DIR}/outline_server_image.tar"  # Store tar in FILES_DIR
+LOG_FILE="${FILES_DIR}/shadowbox_logs.txt"  # Log file for container logs
 
 # Step 1: Install prerequisites
 echo "Installing prerequisites..."
@@ -74,6 +75,14 @@ sudo chown $(whoami):$(whoami) "${CONFIG_FILE}"  # Ensure user can read config f
 
 # Step 6.5: Verify Outline VPN container is working (ensure container is rewritten)
 echo "Verifying Outline VPN container functionality..."
+# Create FILES_DIR early to ensure log file can be written
+echo "Creating output directory ${FILES_DIR}..."
+mkdir -p "${FILES_DIR}"
+if [ ! -d "${FILES_DIR}" ] || [ ! -w "${FILES_DIR}" ]; then
+  echo "Error: Directory ${FILES_DIR} does not exist or is not writable."
+  exit 1
+fi
+
 # Check for port conflicts before starting container
 echo "Checking for port conflicts on ${API_PORT}..."
 if sudo netstat -tuln | grep ":${API_PORT}" > /dev/null; then
@@ -123,10 +132,10 @@ done
 
 # Check container logs for errors
 echo "Checking container logs for errors..."
-sudo docker logs "${OUTLINE_CONTAINER_NAME}" > "${FILES_DIR}/shadowbox_logs.txt"
-if grep -i "error" "${FILES_DIR}/shadowbox_logs.txt"; then
-  echo "Error: Errors found in container logs. Full logs saved to ${FILES_DIR}/shadowbox_logs.txt"
-  cat "${FILES_DIR}/shadowbox_logs.txt"
+sudo docker logs "${OUTLINE_CONTAINER_NAME}" > "${LOG_FILE}"
+if grep -i "error" "${LOG_FILE}"; then
+  echo "Error: Errors found in container logs. Full logs saved to ${LOG_FILE}"
+  cat "${LOG_FILE}"
   sudo docker rm -f "${OUTLINE_CONTAINER_NAME}"
   exit 1
 fi
@@ -136,8 +145,8 @@ echo "No errors found in logs."
 echo "Verifying API port ${API_PORT} is listening..."
 if ! sudo netstat -tuln | grep ":${API_PORT}" > /dev/null; then
   echo "Error: API port ${API_PORT} is not listening."
-  echo "Container logs saved to ${FILES_DIR}/shadowbox_logs.txt"
-  cat "${FILES_DIR}/shadowbox_logs.txt"
+  echo "Container logs saved to ${LOG_FILE}"
+  cat "${LOG_FILE}"
   sudo docker rm -f "${OUTLINE_CONTAINER_NAME}"
   exit 1
 fi
@@ -149,8 +158,8 @@ HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:${API_POR
 HTTPS_STATUS=$(curl -k -s -o /dev/null -w "%{http_code}" "https://localhost:${API_PORT}")
 if [ "$HTTP_STATUS" != "200" ] && [ "$HTTPS_STATUS" != "200" ]; then
   echo "Error: Outline API is not responding correctly on port ${API_PORT} (HTTP: $HTTP_STATUS, HTTPS: $HTTPS_STATUS)."
-  echo "Container logs saved to ${FILES_DIR}/shadowbox_logs.txt"
-  cat "${FILES_DIR}/shadowbox_logs.txt"
+  echo "Container logs saved to ${LOG_FILE}"
+  cat "${LOG_FILE}"
   sudo docker rm -f "${OUTLINE_CONTAINER_NAME}"
   exit 1
 fi
@@ -162,8 +171,8 @@ API_RESPONSE=$(curl -s "http://localhost:${API_PORT}/access-keys")
 if ! echo "${API_RESPONSE}" | grep -q "accessKeys"; then
   echo "Error: Outline VPN management API did not return expected response."
   echo "API Response: ${API_RESPONSE}"
-  echo "Container logs saved to ${FILES_DIR}/shadowbox_logs.txt"
-  cat "${FILES_DIR}/shadowbox_logs.txt"
+  echo "Container logs saved to ${LOG_FILE}"
+  cat "${LOG_FILE}"
   sudo docker rm -f "${OUTLINE_CONTAINER_NAME}"
   exit 1
 fi
@@ -181,9 +190,12 @@ sudo docker rm "${OUTLINE_CONTAINER_NAME}" || {
 }
 echo "Outline VPN verification successful."
 
+# Clean up log file
+echo "Cleaning up log file..."
+rm -f "${LOG_FILE}"
+
 # Step 7: Export Docker image
 echo "Exporting Docker image to tar file..."
-mkdir -p "${FILES_DIR}"
 sudo docker save -o "${OUTLINE_IMAGE_TAR}" "${OUTLINE_IMAGE}"
 if [ ! -f "${OUTLINE_IMAGE_TAR}" ]; then
   echo "Error: Failed to create ${OUTLINE_IMAGE_TAR}"
@@ -216,7 +228,6 @@ if [ ! -f "${DOCKER_OFFLINE_TAR}" ]; then
   echo "Error: Failed to create ${DOCKER_OFFLINE_TAR}"
   exit 1
 fi
-mkdir -p "${FILES_DIR}"
 mv "${DOCKER_OFFLINE_TAR}" "${FILES_DIR}/" || {
   echo "Error: Failed to move ${DOCKER_OFFLINE_TAR} to ${FILES_DIR}/"
   exit 1
