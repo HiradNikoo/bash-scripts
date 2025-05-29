@@ -33,6 +33,9 @@ fi
 # Step 3: Unzip the bundle
 echo "Unzipping the bundle..."
 unzip "${ZIP_BUNDLE}"
+echo "=================== Contents of the unzipped bundle =================="
+ls -la
+echo "======================================================================"
 
 # Step 4: Install Docker from offline packages
 echo "Installing Docker from offline packages..."
