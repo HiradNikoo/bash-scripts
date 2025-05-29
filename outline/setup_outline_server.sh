@@ -6,7 +6,7 @@
 # Verifies Outline VPN container is running and functional before exporting image
 # Ensures container is rewritten on rerun by removing existing container
 # Handles port conflicts and logs detailed errors
-# Generates self-signed certificate and certSha256 using Shadowbox
+# Generates self-signed certificate and certSha256 using Shadowbox or fallback
 
 # Exit on error
 set -e
@@ -19,8 +19,9 @@ ZIP_OUTPUT="${FILES_DIR}/outline_docker_bundle.zip"
 DOCKER_PORT="8080"
 API_PORT="8081"
 CONFIG_FILE="${CONFIG_DIR}/shadowbox_config.json"
-CERT_DIR="${PERSISTED_STATE_DIR}/outline-ss-server"
+CERT_DIR="${PERSISTED_STATE_DIR}"
 CERT_FILE="${CERT_DIR}/shadowbox.crt"
+KEY_FILE="${CERT_DIR}/shadowbox.key"
 ACCESS_FILE="${FILES_DIR}/access.txt"
 DOCKER_OFFLINE_DIR="/tmp/docker_offline"
 DOCKER_OFFLINE_TAR="docker_offline.tar.gz"
@@ -87,11 +88,17 @@ rm -f "${CONFIG_DIR}/test_write"
 PUBLIC_IP=$(curl -s https://api.ipify.org || echo "unknown")
 if [ "$PUBLIC_IP" = "unknown" ]; then
   echo "Warning: Could not determine public IP. Please set SB_PUBLIC_IP manually."
-  PUBLIC_IP="localhost"
+  PUBLIC_IP=$(ip addr show | grep 'inet ' | grep -v '127.0.0.1' | awk '{print $2}' | cut -d'/' -f1 | head -n 1)
+  if [ -z "$PUBLIC_IP" ]; then
+    echo "Error: Could not determine local IP. Please set PUBLIC_IP manually."
+    exit 1
+  fi
 fi
+echo "Using PUBLIC_IP: ${PUBLIC_IP}"
 
-# Generate a random API prefix (mimics Outline's random string for apiUrl)
+# Generate a random API prefix
 API_PREFIX=$(openssl rand -base64 12 | tr -dc 'a-zA-Z0-9' | head -c 16)
+echo "Using API_PREFIX: ${API_PREFIX}"
 
 # Run Outline container temporarily to generate initial config, certificate, and state
 echo "Running temporary Outline container to initialize configuration and certificate..."
@@ -99,7 +106,7 @@ TEMP_CONTAINER_NAME="shadowbox_temp"
 sudo docker run -d --name "${TEMP_CONTAINER_NAME}" \
   -p "${DOCKER_PORT}:${DOCKER_PORT}" \
   -p "${API_PORT}:${API_PORT}" \
-  -v "${CONFIG_DIR}:/opt/outline/config" \
+  -v "${CONFIG_FILE}:/opt/outline/shadowbox_config.json" \
   -v "${PERSISTED_STATE_DIR}:/root/shadowbox/persisted-state" \
   -e "SB_API_PORT=${API_PORT}" \
   -e "SB_PUBLIC_IP=${PUBLIC_IP}" \
@@ -129,17 +136,23 @@ done
 
 # Wait for config file to be generated
 echo "Waiting for configuration file to be generated..."
+CONFIG_GENERATED=false
 for i in {1..30}; do
   if [ -f "${CONFIG_FILE}" ]; then
     echo "Configuration file generated: ${CONFIG_FILE}"
+    CONFIG_GENERATED=true
     break
   fi
-  if [ "$i" -eq 30 ]; then
-    echo "Warning: Configuration file ${CONFIG_FILE} was not generated within 30 seconds."
-    echo "Container logs:"
-    sudo docker logs "${TEMP_CONTAINER_NAME}"
-    echo "Creating default configuration as fallback..."
-    cat << EOF > "${CONFIG_FILE}"
+  sleep 1
+done
+
+if [ "$CONFIG_GENERATED" = false ]; then
+  echo "Warning: Configuration file ${CONFIG_FILE} was not generated within 30 seconds."
+  echo "Container logs:"
+  sudo docker logs "${TEMP_CONTAINER_NAME}" > "${LOG_FILE}"
+  cat "${LOG_FILE}"
+  echo "Creating default configuration as fallback..."
+  cat << EOF > "${CONFIG_FILE}"
 {
   "apiUrl": "https://${PUBLIC_IP}:${API_PORT}/${API_PREFIX}",
   "certSha256": "placeholder-cert-sha256",
@@ -147,39 +160,48 @@ for i in {1..30}; do
   "port": ${API_PORT}
 }
 EOF
-    echo "Default configuration created. Certificate generation will be attempted separately."
+  echo "Default configuration created."
+fi
+
+# Extract certificate from persisted state or generate fallback
+echo "Extracting certificate from persisted state..."
+CERT_GENERATED=false
+for i in {1..30}; do
+  CERT_PATH=$(find "${PERSISTED_STATE_DIR}" -type f -name "*.crt" -print -quit 2>/dev/null)
+  if [ -n "$CERT_PATH" ]; then
+    echo "Certificate found at ${CERT_PATH}"
+    cp "${CERT_PATH}" "${CERT_FILE}"
+    CERT_GENERATED=true
     break
+  elif [ -f "${PERSISTED_STATE_DIR}/outline-ss-server/config.yml" ] && grep -q "cert:" "${PERSISTED_STATE_DIR}/outline-ss-server/config.yml"; then
+    CERT_CONTENT=$(awk '/cert:/{flag=1; next} /key:/{flag=0} flag' "${PERSISTED_STATE_DIR}/outline-ss-server/config.yml" | sed 's/^[ \t]*//' | tr -d '\n')
+    echo "${CERT_CONTENT}" | base64 -d > "${CERT_FILE}" 2>/dev/null || echo "${CERT_CONTENT}" > "${CERT_FILE}"
+    if [ -s "${CERT_FILE}" ]; then
+      echo "Certificate extracted from config.yml to ${CERT_FILE}"
+      CERT_GENERATED=true
+      break
+    fi
   fi
   sleep 1
 done
 
-# Extract certificate from persisted state
-echo "Extracting certificate from persisted state..."
-mkdir -p "${CERT_DIR}"  # Ensure CERT_DIR exists
-for i in {1..30}; do
-  if [ -f "${CERT_DIR}/config.yml" ]; then
-    # Attempt to extract certificate from config.yml or separate file
-    if [ -f "${CERT_FILE}" ]; then
-      echo "Certificate found at ${CERT_FILE}"
-      break
-    elif grep -q "cert:" "${CERT_DIR}/config.yml"; then
-      # Extract certificate from config.yml if stored as base64 or text
-      CERT_CONTENT=$(awk '/cert:/{flag=1; next} /key:/{flag=0} flag' "${CERT_DIR}/config.yml" | sed 's/^[ \t]*//' | tr -d '\n')
-      echo "${CERT_CONTENT}" | base64 -d > "${CERT_FILE}" 2>/dev/null || echo "${CERT_CONTENT}" > "${CERT_FILE}"
-      if [ -s "${CERT_FILE}" ]; then
-        echo "Certificate extracted from config.yml to ${CERT_FILE}"
-        break
-      fi
-    fi
-  fi
-  if [ "$i" -eq 30 ]; then
-    echo "Error: Certificate file not found in ${CERT_DIR} within 30 seconds."
-    sudo docker logs "${TEMP_CONTAINER_NAME}"
-    sudo docker rm -f "${TEMP_CONTAINER_NAME}"
+if [ "$CERT_GENERATED" = false ]; then
+  echo "Warning: Certificate file not found in ${PERSISTED_STATE_DIR} within 30 seconds."
+  echo "Container logs:"
+  sudo docker logs "${TEMP_CONTAINER_NAME}" > "${LOG_FILE}"
+  cat "${LOG_FILE}"
+  echo "Generating fallback self-signed certificate..."
+  mkdir -p "${CERT_DIR}"
+  openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+    -keyout "${KEY_FILE}" \
+    -out "${CERT_FILE}" \
+    -subj "/C=US/ST=State/L=City/O=Organization/OU=Unit/CN=${PUBLIC_IP}" || {
+    echo "Error: Failed to generate fallback certificate."
     exit 1
-  fi
-  sleep 1
-done
+  }
+  echo "Fallback certificate generated: ${CERT_FILE}"
+  CERT_GENERATED=true
+fi
 
 # Compute certSha256
 echo "Computing certSha256..."
@@ -187,7 +209,8 @@ CERT_SHA256=$(openssl x509 -in "${CERT_FILE}" -outform der | sha256sum | awk '{p
 if [ "$CERT_SHA256" = "error" ] || [ -z "$CERT_SHA256" ]; then
   echo "Error: Failed to compute certSha256 from ${CERT_FILE}."
   cat "${CERT_FILE}"
-  sudo docker logs "${TEMP_CONTAINER_NAME}"
+  sudo docker logs "${TEMP_CONTAINER_NAME}" > "${LOG_FILE}"
+  cat "${LOG_FILE}"
   sudo docker rm -f "${TEMP_CONTAINER_NAME}"
   exit 1
 fi
@@ -207,7 +230,8 @@ echo "Validating configuration file..."
 if ! grep -q "apiUrl" "${CONFIG_FILE}" || ! grep -q "certSha256" "${CONFIG_FILE}"; then
   echo "Error: Configuration file ${CONFIG_FILE} is missing required fields (apiUrl or certSha256)."
   cat "${CONFIG_FILE}"
-  sudo docker logs "${TEMP_CONTAINER_NAME}"
+  sudo docker logs "${TEMP_CONTAINER_NAME}" > "${LOG_FILE}"
+  cat "${LOG_FILE}"
   sudo docker rm -f "${TEMP_CONTAINER_NAME}"
   exit 1
 fi
@@ -225,7 +249,9 @@ echo "Access information saved to ${ACCESS_FILE}. Use this in Outline Manager to
 
 # Secure permissions
 sudo chmod -R 600 "${CONFIG_FILE}" "${CERT_FILE}" "${ACCESS_FILE}"
+[ -f "${KEY_FILE}" ] && sudo chmod 600 "${KEY_FILE}"
 sudo chown $(whoami):$(whoami) "${CONFIG_FILE}" "${CERT_FILE}" "${ACCESS_FILE}"
+[ -f "${KEY_FILE}" ] && sudo chown $(whoami):$(whoami) "${KEY_FILE}"
 
 # Stop and remove temporary container
 echo "Stopping and removing temporary container..."
@@ -262,6 +288,8 @@ fi
 
 # Run new Outline container with certificate
 echo "Starting new Outline VPN container..."
+CERT_ENV=""
+[ -f "${KEY_FILE}" ] && CERT_ENV="-e SB_PRIVATE_KEY_FILE=/opt/outline/shadowbox.key -v ${KEY_FILE}:/opt/outline/shadowbox.key"
 sudo docker run -d --name "${OUTLINE_CONTAINER_NAME}" \
   -p "${DOCKER_PORT}:${DOCKER_PORT}" \
   -p "${API_PORT}:${API_PORT}" \
@@ -269,6 +297,7 @@ sudo docker run -d --name "${OUTLINE_CONTAINER_NAME}" \
   -v "${PERSISTED_STATE_DIR}:/root/shadowbox/persisted-state" \
   -v "${CERT_FILE}:/opt/outline/shadowbox.crt" \
   -e "SB_CERTIFICATE_FILE=/opt/outline/shadowbox.crt" \
+  ${CERT_ENV} \
   "${OUTLINE_IMAGE}" || {
   echo "Error: Failed to start Outline container."
   exit 1
@@ -283,7 +312,8 @@ for i in {1..60}; do
   fi
   if [ "$i" -eq 60 ]; then
     echo "Error: Outline container failed to start within 60 seconds."
-    sudo docker logs "${OUTLINE_CONTAINER_NAME}"
+    sudo docker logs "${OUTLINE_CONTAINER_NAME}" > "${LOG_FILE}"
+    cat "${LOG_FILE}"
     sudo docker rm -f "${OUTLINE_CONTAINER_NAME}"
     exit 1
   fi
@@ -316,16 +346,16 @@ echo "API port ${API_PORT} is listening."
 echo "Testing Outline API accessibility..."
 sleep 10  # Extended wait for API initialization
 for attempt in {1..3}; do
-  echo "Testing HTTP API (attempt ${attempt})..."
-  HTTP_STATUS=$(curl -s --connect-timeout 5 --max-time 10 -o /dev/null -w "%{http_code}" "https://${PUBLIC_IP}:${API_PORT}/${API_PREFIX}" || echo "curl_failed")
+  echo "Testing HTTPS API (attempt ${attempt})..."
+  HTTP_STATUS=$(curl -s --connect-timeout 5 --max-time 10 -k -o /dev/null -w "%{http_code}" "https://${PUBLIC_IP}:${API_PORT}/${API_PREFIX}" || echo "curl_failed")
   if [ "$HTTP_STATUS" = "curl_failed" ]; then
     echo "Warning: curl command failed for https://${PUBLIC_IP}:${API_PORT}/${API_PREFIX} (attempt ${attempt})"
-    curl -v --connect-timeout 5 --max-time 10 "https://${PUBLIC_IP}:${API_PORT}/${API_PREFIX}" > "${FILES_DIR}/curl_http_output.txt" 2>&1
+    curl -v --connect-timeout 5 --max-time 10 -k "https://${PUBLIC_IP}:${API_PORT}/${API_PREFIX}" > "${FILES_DIR}/curl_http_output.txt" 2>&1
     echo "curl output saved to ${FILES_DIR}/curl_http_output.txt"
     cat "${FILES_DIR}/curl_http_output.txt"
   elif [ "$HTTP_STATUS" != "200" ]; then
     echo "Warning: Outline API returned non-200 status on port ${API_PORT} (HTTP: $HTTP_STATUS, attempt ${attempt})."
-    curl -v --connect-timeout 5 --max-time 10 "https://${PUBLIC_IP}:${API_PORT}/${API_PREFIX}" > "${FILES_DIR}/curl_http_output.txt" 2>&1
+    curl -v --connect-timeout 5 --max-time 10 -k "https://${PUBLIC_IP}:${API_PORT}/${API_PREFIX}" > "${FILES_DIR}/curl_http_output.txt" 2>&1
     echo "curl output saved to ${FILES_DIR}/curl_http_output.txt"
     cat "${FILES_DIR}/curl_http_output.txt"
   else
@@ -344,10 +374,10 @@ done
 
 # Verify management API
 echo "Verifying Outline VPN management API..."
-API_RESPONSE=$(curl -s --connect-timeout 5 --max-time 10 "https://${PUBLIC_IP}:${API_PORT}/${API_PREFIX}/access-keys" || echo "curl_failed")
+API_RESPONSE=$(curl -s --connect-timeout 5 --max-time 10 -k "https://${PUBLIC_IP}:${API_PORT}/${API_PREFIX}/access-keys" || echo "curl_failed")
 if [ "$API_RESPONSE" = "curl_failed" ]; then
   echo "Error: curl command failed for https://${PUBLIC_IP}:${API_PORT}/${API_PREFIX}/access-keys"
-  curl -v --connect-timeout 5 --max-time 10 "https://${PUBLIC_IP}:${API_PORT}/${API_PREFIX}/access-keys" > "${FILES_DIR}/curl_access_keys_output.txt" 2>&1
+  curl -v --connect-timeout 5 --max-time 10 -k "https://${PUBLIC_IP}:${API_PORT}/${API_PREFIX}/access-keys" > "${FILES_DIR}/curl_access_keys_output.txt" 2>&1
   echo "curl output saved to ${FILES_DIR}/curl_access_keys_output.txt"
   cat "${FILES_DIR}/curl_access_keys_output.txt"
   echo "Container logs saved to ${LOG_FILE}"
@@ -433,6 +463,7 @@ for file in "${OUTLINE_IMAGE_TAR}" "${CONFIG_FILE}" "${CERT_FILE}" "${ACCESS_FIL
   fi
   echo "Confirmed ${file} exists"
 done
+[ -f "${KEY_FILE}" ] && echo "Confirmed ${KEY_FILE} exists"
 
 # Ensure zip command is available
 if ! command -v zip &> /dev/null; then
@@ -442,7 +473,9 @@ fi
 
 # Change to FILES_DIR to simplify zip paths
 cd "${FILES_DIR}"
-zip -r "${ZIP_OUTPUT}" "$(basename ${OUTLINE_IMAGE_TAR})" "$(basename ${CONFIG_FILE})" "$(basename ${CERT_FILE})" "$(basename ${ACCESS_FILE})" "${DOCKER_OFFLINE_TAR}" || {
+ZIP_FILES="$(basename ${OUTLINE_IMAGE_TAR}) $(basename ${CONFIG_FILE}) $(basename ${CERT_FILE}) $(basename ${ACCESS_FILE}) ${DOCKER_OFFLINE_TAR}"
+[ -f "${KEY_FILE}" ] && ZIP_FILES="${ZIP_FILES} $(basename ${KEY_FILE})"
+zip -r "${ZIP_OUTPUT}" ${ZIP_FILES} || {
   echo "Error: Failed to create zip file ${ZIP_OUTPUT}"
   exit 1
 }
