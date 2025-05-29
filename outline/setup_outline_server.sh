@@ -6,17 +6,22 @@
 # Verifies Outline VPN container is running and functional before exporting image
 # Ensures container is rewritten on rerun by removing existing container
 # Handles port conflicts and logs detailed errors
+# Generates self-signed certificate and certSha256 using Shadowbox
 
 # Exit on error
 set -e
 
 # Variables
 FILES_DIR="$(pwd)/files"  # Use absolute path for FILES_DIR
-CONFIG_DIR="/opt/outline/config"
+CONFIG_DIR="${FILES_DIR}/config"
+PERSISTED_STATE_DIR="${FILES_DIR}/persisted-state"
 ZIP_OUTPUT="${FILES_DIR}/outline_docker_bundle.zip"
 DOCKER_PORT="8080"
 API_PORT="8081"
 CONFIG_FILE="${CONFIG_DIR}/shadowbox_config.json"
+CERT_DIR="${PERSISTED_STATE_DIR}/outline-ss-server"
+CERT_FILE="${CERT_DIR}/shadowbox.crt"
+ACCESS_FILE="${FILES_DIR}/access.txt"
 DOCKER_OFFLINE_DIR="/tmp/docker_offline"
 DOCKER_OFFLINE_TAR="docker_offline.tar.gz"
 OUTLINE_IMAGE="quay.io/outline/shadowbox:stable"
@@ -29,7 +34,7 @@ LOG_FILE="${FILES_DIR}/shadowbox_logs.txt"  # Log file for container logs
 # Step 1: Install prerequisites
 echo "Installing prerequisites..."
 sudo apt-get update
-sudo apt-get install -y ca-certificates curl unzip wget apt-transport-https gnupg lsb-release zip net-tools
+sudo apt-get install -y ca-certificates curl unzip wget apt-transport-https gnupg lsb-release zip net-tools openssl
 
 # Step 2: Set up Docker repository
 echo "Setting up Docker repository..."
@@ -57,29 +62,49 @@ sudo systemctl enable docker
 echo "Pulling Outline Server image..."
 sudo docker pull "${OUTLINE_IMAGE}"
 
-# Step 5: Create configuration directory
-echo "Creating configuration directory..."
-sudo mkdir -p "${CONFIG_DIR}"
-sudo chown $(whoami):$(whoami) "${CONFIG_DIR}"  # Ensure user can write to config dir
+# Step 5: Create output directory
+echo "Creating output directory ${FILES_DIR}..."
+mkdir -p "${FILES_DIR}"
+if [ ! -d "${FILES_DIR}" ] || [ ! -w "${FILES_DIR}" ]; then
+  echo "Error: Directory ${FILES_DIR} does not exist or is not writable."
+  exit 1
+fi
 
-# Step 6: Generate sample configuration and initialize state
-echo "Generating sample configuration and initializing state..."
-sudo mkdir -p "${CONFIG_DIR}"
-sudo chown $(whoami):$(whoami) "${CONFIG_DIR}"
+# Step 6: Generate sample configuration, certificate, and certSha256
+echo "Creating configuration and persisted-state directories..."
+sudo mkdir -p "${CONFIG_DIR}" "${PERSISTED_STATE_DIR}"
+sudo chown $(whoami):$(whoami) "${CONFIG_DIR}" "${PERSISTED_STATE_DIR}"
+sudo chmod -R 777 "${CONFIG_DIR}" "${PERSISTED_STATE_DIR}"  # Temporary permissive permissions
 
-# Create persisted-state directory for Outline
-PERSISTED_STATE_DIR="/opt/outline/persisted-state"
-sudo mkdir -p "${PERSISTED_STATE_DIR}"
-sudo chown $(whoami):$(whoami) "${PERSISTED_STATE_DIR}"
+# Verify write access
+sudo -u "$(whoami)" touch "${CONFIG_DIR}/test_write" || {
+  echo "Error: User $(whoami) cannot write to ${CONFIG_DIR}"
+  exit 1
+}
+rm -f "${CONFIG_DIR}/test_write"
 
-# Run Outline container temporarily to generate initial config and state
-echo "Running temporary Outline container to initialize configuration..."
+# Get public IP
+PUBLIC_IP=$(curl -s https://api.ipify.org || echo "unknown")
+if [ "$PUBLIC_IP" = "unknown" ]; then
+  echo "Warning: Could not determine public IP. Please set SB_PUBLIC_IP manually."
+  PUBLIC_IP="localhost"
+fi
+
+# Generate a random API prefix (mimics Outline's random string for apiUrl)
+API_PREFIX=$(openssl rand -base64 12 | tr -dc 'a-zA-Z0-9' | head -c 16)
+
+# Run Outline container temporarily to generate initial config, certificate, and state
+echo "Running temporary Outline container to initialize configuration and certificate..."
 TEMP_CONTAINER_NAME="shadowbox_temp"
 sudo docker run -d --name "${TEMP_CONTAINER_NAME}" \
   -p "${DOCKER_PORT}:${DOCKER_PORT}" \
   -p "${API_PORT}:${API_PORT}" \
   -v "${CONFIG_DIR}:/opt/outline/config" \
   -v "${PERSISTED_STATE_DIR}:/root/shadowbox/persisted-state" \
+  -e "SB_API_PORT=${API_PORT}" \
+  -e "SB_PUBLIC_IP=${PUBLIC_IP}" \
+  -e "SB_DEFAULT_SERVER_NAME=OutlineServer" \
+  -e "SB_API_PREFIX=${API_PREFIX}" \
   "${OUTLINE_IMAGE}" || {
   echo "Error: Failed to start temporary Outline container."
   exit 1
@@ -95,6 +120,7 @@ for i in {1..60}; do
   if [ "$i" -eq 60 ]; then
     echo "Error: Temporary container failed to start within 60 seconds."
     sudo docker logs "${TEMP_CONTAINER_NAME}"
+    sudo docker inspect "${TEMP_CONTAINER_NAME}" | grep -i "error"
     sudo docker rm -f "${TEMP_CONTAINER_NAME}"
     exit 1
   fi
@@ -109,13 +135,97 @@ for i in {1..30}; do
     break
   fi
   if [ "$i" -eq 30 ]; then
-    echo "Error: Configuration file ${CONFIG_FILE} was not generated within 30 seconds."
+    echo "Warning: Configuration file ${CONFIG_FILE} was not generated within 30 seconds."
+    echo "Container logs:"
+    sudo docker logs "${TEMP_CONTAINER_NAME}"
+    echo "Creating default configuration as fallback..."
+    cat << EOF > "${CONFIG_FILE}"
+{
+  "apiUrl": "https://${PUBLIC_IP}:${API_PORT}/${API_PREFIX}",
+  "certSha256": "placeholder-cert-sha256",
+  "hostname": "$(hostname)",
+  "port": ${API_PORT}
+}
+EOF
+    echo "Default configuration created. Certificate generation will be attempted separately."
+    break
+  fi
+  sleep 1
+done
+
+# Extract certificate from persisted state
+echo "Extracting certificate from persisted state..."
+mkdir -p "${CERT_DIR}"  # Ensure CERT_DIR exists
+for i in {1..30}; do
+  if [ -f "${CERT_DIR}/config.yml" ]; then
+    # Attempt to extract certificate from config.yml or separate file
+    if [ -f "${CERT_FILE}" ]; then
+      echo "Certificate found at ${CERT_FILE}"
+      break
+    elif grep -q "cert:" "${CERT_DIR}/config.yml"; then
+      # Extract certificate from config.yml if stored as base64 or text
+      CERT_CONTENT=$(awk '/cert:/{flag=1; next} /key:/{flag=0} flag' "${CERT_DIR}/config.yml" | sed 's/^[ \t]*//' | tr -d '\n')
+      echo "${CERT_CONTENT}" | base64 -d > "${CERT_FILE}" 2>/dev/null || echo "${CERT_CONTENT}" > "${CERT_FILE}"
+      if [ -s "${CERT_FILE}" ]; then
+        echo "Certificate extracted from config.yml to ${CERT_FILE}"
+        break
+      fi
+    fi
+  fi
+  if [ "$i" -eq 30 ]; then
+    echo "Error: Certificate file not found in ${CERT_DIR} within 30 seconds."
     sudo docker logs "${TEMP_CONTAINER_NAME}"
     sudo docker rm -f "${TEMP_CONTAINER_NAME}"
     exit 1
   fi
   sleep 1
 done
+
+# Compute certSha256
+echo "Computing certSha256..."
+CERT_SHA256=$(openssl x509 -in "${CERT_FILE}" -outform der | sha256sum | awk '{print $1}' || echo "error")
+if [ "$CERT_SHA256" = "error" ] || [ -z "$CERT_SHA256" ]; then
+  echo "Error: Failed to compute certSha256 from ${CERT_FILE}."
+  cat "${CERT_FILE}"
+  sudo docker logs "${TEMP_CONTAINER_NAME}"
+  sudo docker rm -f "${TEMP_CONTAINER_NAME}"
+  exit 1
+fi
+echo "Computed certSha256: ${CERT_SHA256}"
+
+# Update configuration with certSha256 if placeholder exists
+if grep -q "placeholder-cert-sha256" "${CONFIG_FILE}"; then
+  echo "Updating configuration with computed certSha256..."
+  sed -i "s/\"certSha256\": \"placeholder-cert-sha256\"/\"certSha256\": \"${CERT_SHA256}\"/" "${CONFIG_FILE}" || {
+    echo "Error: Failed to update ${CONFIG_FILE} with certSha256."
+    exit 1
+  }
+fi
+
+# Verify config file has required fields
+echo "Validating configuration file..."
+if ! grep -q "apiUrl" "${CONFIG_FILE}" || ! grep -q "certSha256" "${CONFIG_FILE}"; then
+  echo "Error: Configuration file ${CONFIG_FILE} is missing required fields (apiUrl or certSha256)."
+  cat "${CONFIG_FILE}"
+  sudo docker logs "${TEMP_CONTAINER_NAME}"
+  sudo docker rm -f "${TEMP_CONTAINER_NAME}"
+  exit 1
+fi
+
+# Save access information for Outline Manager
+echo "Saving access information to ${ACCESS_FILE}..."
+cat << EOF > "${ACCESS_FILE}"
+{
+  "apiUrl": "https://${PUBLIC_IP}:${API_PORT}/${API_PREFIX}",
+  "certSha256": "${CERT_SHA256}"
+}
+EOF
+sudo chown $(whoami):$(whoami) "${ACCESS_FILE}"
+echo "Access information saved to ${ACCESS_FILE}. Use this in Outline Manager to connect to the server."
+
+# Secure permissions
+sudo chmod -R 600 "${CONFIG_FILE}" "${CERT_FILE}" "${ACCESS_FILE}"
+sudo chown $(whoami):$(whoami) "${CONFIG_FILE}" "${CERT_FILE}" "${ACCESS_FILE}"
 
 # Stop and remove temporary container
 echo "Stopping and removing temporary container..."
@@ -128,24 +238,8 @@ sudo docker rm "${TEMP_CONTAINER_NAME}" || {
   exit 1
 }
 
-# Ensure config file has required fields (minimal validation)
-echo "Validating configuration file..."
-if ! grep -q "apiUrl" "${CONFIG_FILE}" || ! grep -q "certSha256" "${CONFIG_FILE}"; then
-  echo "Error: Configuration file ${CONFIG_FILE} is missing required fields (apiUrl or certSha256)."
-  cat "${CONFIG_FILE}"
-  exit 1
-fi
-
-# Step 6.5: Verify Outline VPN container is working
+# Step 7: Verify Outline VPN container functionality
 echo "Verifying Outline VPN container functionality..."
-# Create FILES_DIR early to ensure log file can be written
-echo "Creating output directory ${FILES_DIR}..."
-mkdir -p "${FILES_DIR}"
-if [ ! -d "${FILES_DIR}" ] || [ ! -w "${FILES_DIR}" ]; then
-  echo "Error: Directory ${FILES_DIR} does not exist or is not writable."
-  exit 1
-fi
-
 # Check for port conflicts
 echo "Checking for port conflicts on ${API_PORT}..."
 if sudo netstat -tuln | grep ":${API_PORT}" > /dev/null; then
@@ -166,13 +260,15 @@ else
   echo "No existing ${OUTLINE_CONTAINER_NAME} container found."
 fi
 
-# Run new Outline container
+# Run new Outline container with certificate
 echo "Starting new Outline VPN container..."
 sudo docker run -d --name "${OUTLINE_CONTAINER_NAME}" \
   -p "${DOCKER_PORT}:${DOCKER_PORT}" \
   -p "${API_PORT}:${API_PORT}" \
   -v "${CONFIG_FILE}:/opt/outline/shadowbox_config.json" \
   -v "${PERSISTED_STATE_DIR}:/root/shadowbox/persisted-state" \
+  -v "${CERT_FILE}:/opt/outline/shadowbox.crt" \
+  -e "SB_CERTIFICATE_FILE=/opt/outline/shadowbox.crt" \
   "${OUTLINE_IMAGE}" || {
   echo "Error: Failed to start Outline container."
   exit 1
@@ -221,15 +317,15 @@ echo "Testing Outline API accessibility..."
 sleep 10  # Extended wait for API initialization
 for attempt in {1..3}; do
   echo "Testing HTTP API (attempt ${attempt})..."
-  HTTP_STATUS=$(curl -s --connect-timeout 5 --max-time 10 -o /dev/null -w "%{http_code}" "http://localhost:${API_PORT}" || echo "curl_failed")
+  HTTP_STATUS=$(curl -s --connect-timeout 5 --max-time 10 -o /dev/null -w "%{http_code}" "https://${PUBLIC_IP}:${API_PORT}/${API_PREFIX}" || echo "curl_failed")
   if [ "$HTTP_STATUS" = "curl_failed" ]; then
-    echo "Warning: curl command failed for http://localhost:${API_PORT} (attempt ${attempt})"
-    curl -v --connect-timeout 5 --max-time 10 "http://localhost:${API_PORT}" > "${FILES_DIR}/curl_http_output.txt" 2>&1
+    echo "Warning: curl command failed for https://${PUBLIC_IP}:${API_PORT}/${API_PREFIX} (attempt ${attempt})"
+    curl -v --connect-timeout 5 --max-time 10 "https://${PUBLIC_IP}:${API_PORT}/${API_PREFIX}" > "${FILES_DIR}/curl_http_output.txt" 2>&1
     echo "curl output saved to ${FILES_DIR}/curl_http_output.txt"
     cat "${FILES_DIR}/curl_http_output.txt"
   elif [ "$HTTP_STATUS" != "200" ]; then
     echo "Warning: Outline API returned non-200 status on port ${API_PORT} (HTTP: $HTTP_STATUS, attempt ${attempt})."
-    curl -v --connect-timeout 5 --max-time 10 "http://localhost:${API_PORT}" > "${FILES_DIR}/curl_http_output.txt" 2>&1
+    curl -v --connect-timeout 5 --max-time 10 "https://${PUBLIC_IP}:${API_PORT}/${API_PREFIX}" > "${FILES_DIR}/curl_http_output.txt" 2>&1
     echo "curl output saved to ${FILES_DIR}/curl_http_output.txt"
     cat "${FILES_DIR}/curl_http_output.txt"
   else
@@ -248,10 +344,10 @@ done
 
 # Verify management API
 echo "Verifying Outline VPN management API..."
-API_RESPONSE=$(curl -s --connect-timeout 5 --max-time 10 "http://localhost:${API_PORT}/access-keys" || echo "curl_failed")
+API_RESPONSE=$(curl -s --connect-timeout 5 --max-time 10 "https://${PUBLIC_IP}:${API_PORT}/${API_PREFIX}/access-keys" || echo "curl_failed")
 if [ "$API_RESPONSE" = "curl_failed" ]; then
-  echo "Error: curl command failed for http://localhost:${API_PORT}/access-keys"
-  curl -v --connect-timeout 5 --max-time 10 "http://localhost:${API_PORT}/access-keys" > "${FILES_DIR}/curl_access_keys_output.txt" 2>&1
+  echo "Error: curl command failed for https://${PUBLIC_IP}:${API_PORT}/${API_PREFIX}/access-keys"
+  curl -v --connect-timeout 5 --max-time 10 "https://${PUBLIC_IP}:${API_PORT}/${API_PREFIX}/access-keys" > "${FILES_DIR}/curl_access_keys_output.txt" 2>&1
   echo "curl output saved to ${FILES_DIR}/curl_access_keys_output.txt"
   cat "${FILES_DIR}/curl_access_keys_output.txt"
   echo "Container logs saved to ${LOG_FILE}"
@@ -285,7 +381,7 @@ echo "Outline VPN verification successful."
 echo "Cleaning up log file..."
 rm -f "${LOG_FILE}"
 
-# Step 7: Export Docker image
+# Step 8: Export Docker image
 echo "Exporting Docker image to tar file..."
 sudo docker save -o "${OUTLINE_IMAGE_TAR}" "${OUTLINE_IMAGE}"
 if [ ! -f "${OUTLINE_IMAGE_TAR}" ]; then
@@ -294,7 +390,7 @@ if [ ! -f "${OUTLINE_IMAGE_TAR}" ]; then
 fi
 sudo chown $(whoami):$(whoami) "${OUTLINE_IMAGE_TAR}"  # Ensure user can read tar file
 
-# Step 8: Download Docker offline installer packages
+# Step 9: Download Docker offline installer packages
 echo "Downloading Docker offline installer packages..."
 mkdir -p "${DOCKER_OFFLINE_DIR}"
 cd "${DOCKER_OFFLINE_DIR}"
@@ -327,10 +423,10 @@ sudo chown $(whoami):$(whoami) "${FILES_DIR}/${DOCKER_OFFLINE_TAR}"  # Ensure us
 cd /tmp
 rm -rf "${DOCKER_OFFLINE_DIR}"
 
-# Step 9: Zip Outline image and configuration
-echo "Zipping Outline image, configuration, and Docker installer..."
+# Step 10: Zip Outline image, configuration, certificate, and access file
+echo "Zipping Outline image, configuration, certificate, and Docker installer..."
 # Verify all files exist
-for file in "${OUTLINE_IMAGE_TAR}" "${CONFIG_FILE}" "${FILES_DIR}/${DOCKER_OFFLINE_TAR}"; do
+for file in "${OUTLINE_IMAGE_TAR}" "${CONFIG_FILE}" "${CERT_FILE}" "${ACCESS_FILE}" "${FILES_DIR}/${DOCKER_OFFLINE_TAR}"; do
   if [ ! -f "${file}" ]; then
     echo "Error: File ${file} does not exist"
     exit 1
@@ -346,7 +442,7 @@ fi
 
 # Change to FILES_DIR to simplify zip paths
 cd "${FILES_DIR}"
-zip -r "${ZIP_OUTPUT}" "$(basename ${OUTLINE_IMAGE_TAR})" "${CONFIG_FILE}" "${DOCKER_OFFLINE_TAR}" || {
+zip -r "${ZIP_OUTPUT}" "$(basename ${OUTLINE_IMAGE_TAR})" "$(basename ${CONFIG_FILE})" "$(basename ${CERT_FILE})" "$(basename ${ACCESS_FILE})" "${DOCKER_OFFLINE_TAR}" || {
   echo "Error: Failed to create zip file ${ZIP_OUTPUT}"
   exit 1
 }
@@ -358,7 +454,7 @@ if [ ! -f "${ZIP_OUTPUT}" ]; then
 fi
 echo "Zip file created successfully: ${ZIP_OUTPUT}"
 
-# Step 10: Clean up
+# Step 11: Clean up
 echo "Cleaning up temporary files..."
 rm -f "${OUTLINE_IMAGE_TAR}"
 # Comment out the next line if you want to keep docker_offline.tar.gz in FILES_DIR for separate upload
@@ -366,6 +462,7 @@ rm -f "${OUTLINE_IMAGE_TAR}"
 
 echo "Bundle created as ${ZIP_OUTPUT}"
 echo "Transfer ${ZIP_OUTPUT} to https://bash.hiradnikoo.com/outline/files and extract docker_offline.tar.gz for separate upload."
+echo "Use ${ACCESS_FILE} to connect Outline Manager to the server."
 echo "You can now transfer the files to the second server and run deploy_outline_server.sh."
 echo "On the second server (serverB), run the following command to fetch and execute bootstrap-deploy.sh:"
 echo "wget -O bootstrap-deploy.sh https://bash.hiradnikoo.com/outline/bootstrap-deploy.sh && chmod +x bootstrap-deploy.sh && sudo ./bootstrap-deploy.sh"
