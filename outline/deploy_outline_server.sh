@@ -11,7 +11,7 @@ set -e
 
 # Variables
 ZIP_BUNDLE="outline_docker_bundle.zip"
-DOWNLOAD_URL="https://bash.hiradnikoo.com/outline/files/outline_docker_bundle.zip"
+DOWNLOAD_URL="http://github.com/HiradNikoo/bash-scripts/releases/latest/download/outline_docker_bundle.zip"
 FILES_DIR="$(pwd)/files"
 CONFIG_DIR="/opt/outline/config"
 PERSISTED_STATE_DIR="/root/shadowbox/persisted-state"
