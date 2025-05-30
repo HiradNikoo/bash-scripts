@@ -30,6 +30,73 @@ LOG_FILE="$(pwd)/deploy_shadowbox_logs.txt"
 UBUNTU_CODENAME=$(lsb_release -cs)
 ARCH=$(dpkg --print-architecture)
 
+# Step 0:
+# List of residual files and folders to check
+RESIDUAL_FILES=("deploy_outline_server.sh" "outline_docker_bundle.zip")
+RESIDUAL_FOLDERS=("files")
+
+# Function to prompt user for confirmation
+prompt_for_deletion() {
+  local item="$1"
+  read -p "Found residual item: $item. Do you want to delete it? (y/N): " response
+  case "$response" in
+    [yY][eE][sS]|[yY])
+      return 0  # User approved deletion
+      ;;
+    *)
+      return 1  # User declined deletion
+      ;;
+  esac
+}
+
+# Flag to track if any residuals are found
+residuals_found=false
+
+# Check for residual files
+for file in "${RESIDUAL_FILES[@]}"; do
+  if [ -f "$file" ]; then
+    residuals_found=true
+    echo "Found residual file: $file"
+    if prompt_for_deletion "$file"; then
+      echo "Deleting $file..."
+      rm -f "$file" || {
+        echo "Error: Failed to delete $file"
+        exit 1
+      }
+    else
+      echo "User declined to delete $file. Exiting to prevent conflicts."
+      exit 1
+    fi
+  fi
+done
+
+# Check for residual folders
+for folder in "${RESIDUAL_FOLDERS[@]}"; do
+  if [ -d "$folder" ]; then
+    residuals_found=true
+    echo "Found residual folder: $folder"
+    if prompt_for_deletion "$folder"; then
+      echo "Deleting $folder..."
+      rm -rf "$folder" || {
+        echo "Error: Failed to delete $folder"
+        exit 1
+      }
+    else
+      echo "User declined to delete $folder. Exiting to prevent conflicts."
+      exit 1
+    fi
+  fi
+done
+
+# If no residuals were found, proceed
+if [ "$residuals_found" = false ]; then
+  echo "No residual files or folders found. Proceeding with clean deployment."
+fi
+
+# The rest of your deploy_outline_server.sh script would follow here
+echo "Clean-up complete. Ready to proceed with Outline VPN deployment."
+
+
 # Step 1: Install prerequisites
 echo "Installing prerequisites..."
 sudo apt-get update
