@@ -148,7 +148,7 @@ fi
 echo "Checking for Docker installation..."
 if ! command -v docker &> /dev/null; then
   echo "Docker not found, installing from offline packages..."
-  pushd "${FILES_DIR}" || {
+  cd "${FILES_DIR}" || {
     echo "Error: Failed to change to ${FILES_DIR}."
     exit 1
   }
@@ -174,13 +174,13 @@ if ! command -v docker &> /dev/null; then
   fi
   sudo systemctl enable docker
   echo "Docker installed and running."
+  cd "${ORIGINAL_DIR}" || {
+    echo "Error: Failed to return to original directory."
+    exit 1
+  }
 else
   echo "Docker is already installed."
 fi
-popd || {
-  echo "Error: Failed to return to original directory."
-  exit 1
-}
 
 # Step 5: Load Outline Server image
 echo "Loading Outline Server image..."
