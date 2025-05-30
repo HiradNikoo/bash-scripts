@@ -202,27 +202,25 @@ sudo chmod 700 "${CONFIG_DIR}" "${PERSISTED_STATE_DIR}"
 
 # Step 7: Move configuration and certificate files
 echo "Moving configuration and certificate files..."
-for file in "${CONFIG_DIR}/shadowbox_config.json" "${CERT_DIR}/shadowbox.crt" "${CERT_DIR}/shadowbox.key" "${FILES_DIR}/access.txt"; do
-  if [ -f "$file" ]; then
-    echo "Error: Destination file $file already exists."
-    exit 1
-  fi
-done
-sudo mv "${FILES_DIR}/${CONFIG_FILE}" "${CONFIG_DIR}/shadowbox_config.json" || {
+
+# Backup existing shadowbox_config.json if it exists
+[ -f "${CONFIG_DIR}/shadowbox_config.json" ] && sudo cp "${CONFIG_DIR}/shadowbox_config.json" "${CONFIG_DIR}/shadowbox_config.json.bak"
+
+sudo mv -f "${FILES_DIR}/${CONFIG_FILE}" "${CONFIG_DIR}/shadowbox_config.json" || {
   echo "Error: Failed to move configuration file."
   exit 1
 }
-sudo mv "${FILES_DIR}/${CERT_FILE}" "${CERT_DIR}/shadowbox.crt" || {
+sudo mv -f "${FILES_DIR}/${CERT_FILE}" "${CERT_DIR}/shadowbox.crt" || {
   echo "Error: Failed to move certificate file."
   exit 1
 }
 if [ -f "${FILES_DIR}/${KEY_FILE}" ]; then
-  sudo mv "${FILES_DIR}/${KEY_FILE}" "${CERT_DIR}/shadowbox.key" || {
+  sudo mv -f "${FILES_DIR}/${KEY_FILE}" "${CERT_DIR}/shadowbox.key" || {
     echo "Error: Failed to move private key file."
     exit 1
   }
 fi
-sudo mv "${FILES_DIR}/${ACCESS_FILE}" "${FILES_DIR}/access.txt" || {
+sudo mv -f "${FILES_DIR}/${ACCESS_FILE}" "${FILES_DIR}/access.txt" || {
   echo "Error: Failed to move access file."
   exit 1
 }
@@ -230,6 +228,7 @@ sudo chown "$(whoami):$(whoami)" "${CONFIG_DIR}/shadowbox_config.json" "${CERT_D
 [ -f "${CERT_DIR}/shadowbox.key" ] && sudo chown "$(whoami):$(whoami)" "${CERT_DIR}/shadowbox.key"
 sudo chmod 600 "${CONFIG_DIR}/shadowbox_config.json" "${CERT_DIR}/shadowbox.crt" "${FILES_DIR}/access.txt"
 [ -f "${CERT_DIR}/shadowbox.key" ] && sudo chmod 600 "${CERT_DIR}/shadowbox.key"
+
 
 # Step 8: Update configuration with server IP
 echo "Updating configuration with server IP..."
