@@ -220,10 +220,7 @@ if [ -f "${FILES_DIR}/${KEY_FILE}" ]; then
     exit 1
   }
 fi
-sudo mv -f "${FILES_DIR}/${ACCESS_FILE}" "${FILES_DIR}/access.txt" || {
-  echo "Error: Failed to move access file."
-  exit 1
-}
+
 sudo chown "$(whoami):$(whoami)" "${CONFIG_DIR}/shadowbox_config.json" "${CERT_DIR}/shadowbox.crt" "${FILES_DIR}/access.txt"
 [ -f "${CERT_DIR}/shadowbox.key" ] && sudo chown "$(whoami):$(whoami)" "${CERT_DIR}/shadowbox.key"
 sudo chmod 600 "${CONFIG_DIR}/shadowbox_config.json" "${CERT_DIR}/shadowbox.crt" "${FILES_DIR}/access.txt"
