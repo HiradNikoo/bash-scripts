@@ -191,7 +191,7 @@ sudo docker load -i "${FILES_DIR}/${OUTLINE_IMAGE_TAR}" || {
 if ! sudo docker images -q "${OUTLINE_IMAGE}" | grep -q .; then
   echo "Error: Docker image ${OUTLINE_IMAGE} not loaded."
   exit 1
-}
+fi
 echo "Outline image loaded successfully."
 
 # Step 6: Create configuration and certificate directories
@@ -237,12 +237,12 @@ SERVER_IP=$(ip addr show $(ip route | awk '/default/ {print $5}') | grep "inet" 
 if [ -z "${SERVER_IP}" ]; then
   echo "Error: Could not determine server IP address."
   exit 1
-}
+fi
 echo "Using SERVER_IP: ${SERVER_IP}"
 if ! jq . "${CONFIG_DIR}/shadowbox_config.json" >/dev/null 2>&1; then
   echo "Error: ${CONFIG_DIR}/shadowbox_config.json is not valid JSON."
   exit 1
-}
+fi
 jq --arg ip "$SERVER_IP" --arg port "$API_PORT" '.apiUrl = "https://" + $ip + ":" + $port' "${CONFIG_DIR}/shadowbox_config.json" > "${CONFIG_DIR}/shadowbox_config.json.tmp" && mv "${CONFIG_DIR}/shadowbox_config.json.tmp" "${CONFIG_DIR}/shadowbox_config.json" || {
   echo "Error: Failed to update ${CONFIG_DIR}/shadowbox_config.json with server IP."
   exit 1
