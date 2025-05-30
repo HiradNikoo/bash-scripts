@@ -214,12 +214,14 @@ for i in {1..60}; do
   fi
   if [ "$i" -eq 60 ]; then
     echo "Error: Outline container failed to start within 60 seconds."
-    sudo docker logs "${OUTLINE_CONTAINER_NAME}" > "${LOG_FILE}" 2>&1
+    sudo docker logs "${OUTLINE_CONTAINER_NAME}" > "${LOG_FILE}"
     cat "${LOG_FILE}"
+    sudo docker rm -f "${OUTLINE_CONTAINER_NAME}"
     exit 1
-  }
+  fi
   sleep 1
 done
+
 
 # Step 13: Check container logs
 echo "Checking container logs for errors..."
