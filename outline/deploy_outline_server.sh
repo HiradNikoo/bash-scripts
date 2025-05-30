@@ -11,16 +11,15 @@ set -e
 
 # Variables
 ZIP_BUNDLE="outline_docker_bundle.zip"
-# Update DOWNLOAD_URL to your preferred location or comment out if transferring manually
-DOWNLOAD_URL="http://github.com/HiradNikoo/bash-scripts/releases/latest/download/outline_docker_bundle.zip"
+DOWNLOAD_URL="https://bash.hiradnikoo.com/outline/files/outline_docker_bundle.zip"
 FILES_DIR="$(pwd)/files"
 CONFIG_DIR="/opt/outline/config"
 PERSISTED_STATE_DIR="/root/shadowbox/persisted-state"
 CERT_DIR="${PERSISTED_STATE_DIR}"
-CONFIG_FILE="${CONFIG_DIR}/shadowbox_config.json"
-CERT_FILE="${CERT_DIR}/shadowbox.crt"
-KEY_FILE="${CERT_DIR}/shadowbox.key"
-ACCESS_FILE="${FILES_DIR}/access.txt"
+CONFIG_FILE="config/shadowbox_config.json"  # Relative to FILES_DIR
+CERT_FILE="shadowbox.crt"                   # Directly in FILES_DIR
+KEY_FILE="shadowbox.key"                    # Directly in FILES_DIR
+ACCESS_FILE="access.txt"                    # Directly in FILES_DIR
 DOCKER_OFFLINE_TAR="docker_offline.tar.gz"
 OUTLINE_IMAGE_TAR="outline_server_image.tar"
 OUTLINE_IMAGE="quay.io/outline/shadowbox:stable"
@@ -61,11 +60,11 @@ unzip -o "${ZIP_BUNDLE}" -d "${FILES_DIR}" || {
   exit 1
 }
 echo "=================== Contents of ${FILES_DIR} =================="
-ls -la "${FILES_DIR}"
+ls -laR "${FILES_DIR}"
 echo "=============================================================="
 
 # Verify required files
-for file in "${OUTLINE_IMAGE_TAR}" "${CONFIG_FILE}" "${CERT_FILE}" "${ACCESS_FILE}" "${DOCKER_OFFLINE_TAR}"; do
+for file in "${CONFIG_FILE}" "${CERT_FILE}" "${ACCESS_FILE}" "${DOCKER_OFFLINE_TAR}" "${OUTLINE_IMAGE_TAR}"; do
   if [ ! -f "${FILES_DIR}/${file}" ]; then
     echo "Error: Required file ${file} not found in ${FILES_DIR}."
     exit 1
@@ -73,8 +72,8 @@ for file in "${OUTLINE_IMAGE_TAR}" "${CONFIG_FILE}" "${CERT_FILE}" "${ACCESS_FIL
   echo "Confirmed ${FILES_DIR}/${file} exists."
 done
 # Check for optional private key
-if [ -f "${FILES_DIR}/shadowbox.key" ]; then
-  echo "Confirmed ${FILES_DIR}/shadowbox.key exists."
+if [ -f "${FILES_DIR}/${KEY_FILE}" ]; then
+  echo "Confirmed ${FILES_DIR}/${KEY_FILE} exists."
 fi
 
 # Step 4: Check if Docker is installed, install if not
@@ -118,7 +117,7 @@ sudo docker load -i "${FILES_DIR}/${OUTLINE_IMAGE_TAR}" || {
 if ! sudo docker images -q "${OUTLINE_IMAGE}" | grep -q .; then
   echo "Error: Docker image ${OUTLINE_IMAGE} not loaded."
   exit 1
-fi
+}
 echo "Outline image loaded successfully."
 
 # Step 6: Create configuration and certificate directories
@@ -129,28 +128,28 @@ sudo chmod 700 "${CONFIG_DIR}" "${PERSISTED_STATE_DIR}"
 
 # Step 7: Move configuration and certificate files
 echo "Moving configuration and certificate files..."
-sudo mv "${FILES_DIR}/shadowbox_config.json" "${CONFIG_FILE}" || {
+sudo mv "${FILES_DIR}/${CONFIG_FILE}" "${CONFIG_DIR}/shadowbox_config.json" || {
   echo "Error: Failed to move configuration file."
   exit 1
 }
-sudo mv "${FILES_DIR}/shadowbox.crt" "${CERT_FILE}" || {
+sudo mv "${FILES_DIR}/${CERT_FILE}" "${CERT_DIR}/shadowbox.crt" || {
   echo "Error: Failed to move certificate file."
   exit 1
 }
-if [ -f "${FILES_DIR}/shadowbox.key" ]; then
-  sudo mv "${FILES_DIR}/shadowbox.key" "${KEY_FILE}" || {
+if [ -f "${FILES_DIR}/${KEY_FILE}" ]; then
+  sudo mv "${FILES_DIR}/${KEY_FILE}" "${CERT_DIR}/shadowbox.key" || {
     echo "Error: Failed to move private key file."
     exit 1
   }
 fi
-sudo mv "${FILES_DIR}/access.txt" "${ACCESS_FILE}" || {
+sudo mv "${FILES_DIR}/${ACCESS_FILE}" "${FILES_DIR}/access.txt" || {
   echo "Error: Failed to move access file."
   exit 1
 }
-sudo chown $(whoami):$(whoami) "${CONFIG_FILE}" "${CERT_FILE}" "${ACCESS_FILE}"
-[ -f "${KEY_FILE}" ] && sudo chown $(whoami):$(whoami) "${KEY_FILE}"
-sudo chmod 600 "${CONFIG_FILE}" "${CERT_FILE}" "${ACCESS_FILE}"
-[ -f "${KEY_FILE}" ] && sudo chmod 600 "${KEY_FILE}"
+sudo chown $(whoami):$(whoami) "${CONFIG_DIR}/shadowbox_config.json" "${CERT_DIR}/shadowbox.crt" "${FILES_DIR}/access.txt"
+[ -f "${CERT_DIR}/shadowbox.key" ] && sudo chown $(whoami):$(whoami) "${CERT_DIR}/shadowbox.key"
+sudo chmod 600 "${CONFIG_DIR}/shadowbox_config.json" "${CERT_DIR}/shadowbox.crt" "${FILES_DIR}/access.txt"
+[ -f "${CERT_DIR}/shadowbox.key" ] && sudo chmod 600 "${CERT_DIR}/shadowbox.key"
 
 # Step 8: Update configuration with server IP
 echo "Updating configuration with server IP..."
@@ -158,11 +157,11 @@ SERVER_IP=$(ip addr show $(ip route | awk '/default/ {print $5}') | grep "inet" 
 if [ -z "${SERVER_IP}" ]; then
   echo "Error: Could not determine server IP address."
   exit 1
-fi
+}
 echo "Using SERVER_IP: ${SERVER_IP}"
 # Update apiUrl in the configuration file
-sed -i "s|https://[^:]*:${API_PORT}|https://${SERVER_IP}:${API_PORT}|" "${CONFIG_FILE}" || {
-  echo "Error: Failed to update ${CONFIG_FILE} with server IP."
+sed -i "s|https://[^:]*:${API_PORT}|https://${SERVER_IP}:${API_PORT}|" "${CONFIG_DIR}/shadowbox_config.json" || {
+  echo "Error: Failed to update ${CONFIG_DIR}/shadowbox_config.json with server IP."
   exit 1
 }
 
@@ -190,13 +189,13 @@ fi
 # Step 11: Run Outline Server container
 echo "Starting Outline Server container..."
 CERT_ENV=""
-[ -f "${KEY_FILE}" ] && CERT_ENV="-e SB_PRIVATE_KEY_FILE=/opt/outline/shadowbox.key -v ${KEY_FILE}:/opt/outline/shadowbox.key"
+[ -f "${CERT_DIR}/shadowbox.key" ] && CERT_ENV="-e SB_PRIVATE_KEY_FILE=/opt/outline/shadowbox.key -v ${CERT_DIR}/shadowbox.key:/opt/outline/shadowbox.key"
 sudo docker run -d --name "${OUTLINE_CONTAINER_NAME}" --restart=always \
   -p "${DOCKER_PORT}:${DOCKER_PORT}" \
   -p "${API_PORT}:${API_PORT}" \
-  -v "${CONFIG_FILE}:/opt/outline/shadowbox_config.json" \
+  -v "${CONFIG_DIR}/shadowbox_config.json:/opt/outline/shadowbox_config.json" \
   -v "${PERSISTED_STATE_DIR}:/root/shadowbox/persisted-state" \
-  -v "${CERT_FILE}:/opt/outline/shadowbox.crt" \
+  -v "${CERT_DIR}/shadowbox.crt:/opt/outline/shadowbox.crt" \
   -e "SB_CERTIFICATE_FILE=/opt/outline/shadowbox.crt" \
   ${CERT_ENV} \
   "${OUTLINE_IMAGE}" || {
@@ -218,7 +217,7 @@ for i in {1..60}; do
     sudo docker logs "${OUTLINE_CONTAINER_NAME}" > "${LOG_FILE}" 2>&1
     cat "${LOG_FILE}"
     exit 1
-  fi
+  }
   sleep 1
 done
 
@@ -248,9 +247,9 @@ echo "API port ${API_PORT} is listening."
 echo "Testing Outline API accessibility..."
 sleep 10  # Wait for API initialization
 # Extract API_PREFIX from access.txt
-API_PREFIX=$(grep "apiUrl" "${ACCESS_FILE}" | sed -n 's|.*https://[^/]*:[0-9]*/\([^"]*\)/access-keys.*|\1|p')
+API_PREFIX=$(grep "apiUrl" "${FILES_DIR}/access.txt" | sed -n 's|.*https://[^/]*:[0-9]*/\([^"]*\)/access-keys.*|\1|p')
 if [ -z "${API_PREFIX}" ]; then
-  echo "Warning: Could not extract API_PREFIX from ${ACCESS_FILE}. Assuming empty prefix."
+  echo "Warning: Could not extract API_PREFIX from ${FILES_DIR}/access.txt. Assuming empty prefix."
   API_PREFIX=""
 fi
 for attempt in {1..3}; do
@@ -276,7 +275,7 @@ for attempt in {1..3}; do
     cat "${LOG_FILE}"
     sudo docker rm -f "${OUTLINE_CONTAINER_NAME}"
     exit 1
-  fi
+  }
   sleep 5
 done
 
@@ -306,10 +305,11 @@ echo "Outline VPN management API is functional."
 # Step 17: Clean up
 echo "Cleaning up temporary files..."
 rm -f "${FILES_DIR}/${OUTLINE_IMAGE_TAR}" "${FILES_DIR}/${DOCKER_OFFLINE_TAR}" "${FILES_DIR}"/*.deb "${ZIP_BUNDLE}"
+rm -rf "${FILES_DIR}/config"  # Remove config directory
 rm -f "${LOG_FILE}"
 
 echo "Outline Server deployed successfully."
 echo "Access the API at https://${SERVER_IP}:${API_PORT}/${API_PREFIX}"
-echo "Use ${ACCESS_FILE} to connect Outline Manager to the server."
+echo "Use ${FILES_DIR}/access.txt to connect Outline Manager to the server."
 echo "To inspect the running container, use: sudo docker logs ${OUTLINE_CONTAINER_NAME}"
 echo "To access the container shell, use: sudo docker exec -it ${OUTLINE_CONTAINER_NAME} /bin/sh"
