@@ -99,6 +99,8 @@ echo "Using PUBLIC_IP: ${PUBLIC_IP}"
 
 # Generate a random API prefix
 API_PREFIX=$(openssl rand -base64 12 | tr -dc 'a-zA-Z0-9' | head -c 16)
+API_PREFIX=
+
 echo "Using API_PREFIX: ${API_PREFIX}"
 
 # Trap to clean up temporary container on exit
