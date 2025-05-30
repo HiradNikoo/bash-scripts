@@ -383,6 +383,10 @@ if ! echo "${API_RESPONSE}" | grep -q "accessKeys"; then
 fi
 echo "Outline VPN management API is functional."
 
+echo "Configuration and access details:"
+echo "Server IP: ${SERVER_IP}"
+cat "${FILES_DIR}/config"
+
 # Step 17: Clean up
 echo "Cleaning up temporary files..."
 rm -f "${FILES_DIR}/${OUTLINE_IMAGE_TAR}" "${FILES_DIR}/${DOCKER_OFFLINE_TAR}" "${FILES_DIR}"/*.deb "${ZIP_BUNDLE}"
