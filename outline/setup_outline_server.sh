@@ -565,8 +565,8 @@ fi
 
 # Change to FILES_DIR to simplify zip paths
 cd "${FILES_DIR}"
-ZIP_FILES="$(basename ${OUTLINE_IMAGE_TAR}) $(basename ${CONFIG_FILE}) $(basename ${CERT_FILE}) $(basename ${ACCESS_FILE}) ${DOCKER_OFFLINE_TAR}"
-[ -f "${KEY_FILE}" ] && ZIP_FILES="${ZIP_FILES} $(basename ${KEY_FILE})"
+# Include directories and individual files
+ZIP_FILES="$(basename ${OUTLINE_IMAGE_TAR}) config persisted-state $(basename ${ACCESS_FILE}) ${DOCKER_OFFLINE_TAR}"
 zip -r "${ZIP_OUTPUT}" ${ZIP_FILES} || {
   echo "Error: Failed to create zip file ${ZIP_OUTPUT}"
   exit 1
