@@ -256,10 +256,19 @@ for port in "${DOCKER_PORT}" "${API_PORT}"; do
 done
 
 # Step 10: Check for existing container and remove if found
+# Step 10: Check for existing container and stop/remove if found
 echo "Checking for existing Outline Server container..."
 if sudo docker ps -a --filter "name=^${OUTLINE_CONTAINER_NAME}$" --format '{{.Names}}' | grep -q "${OUTLINE_CONTAINER_NAME}"; then
-  echo "Existing container found with name ${OUTLINE_CONTAINER_NAME}. Removing it..."
-  sudo docker rm -f "${OUTLINE_CONTAINER_NAME}" || {
+  echo "Existing container found with name ${OUTLINE_CONTAINER_NAME}."
+  if sudo docker ps --filter "name=^${OUTLINE_CONTAINER_NAME}$" --filter "status=running" --format '{{.Names}}' | grep -q "${OUTLINE_CONTAINER_NAME}"; then
+    echo "Container is running. Stopping it..."
+    sudo docker stop "${OUTLINE_CONTAINER_NAME}" || {
+      echo "Error: Failed to stop existing container."
+      exit 1
+    }
+  fi
+  echo "Removing container..."
+  sudo docker rm "${OUTLINE_CONTAINER_NAME}" || {
     echo "Error: Failed to remove existing container."
     exit 1
   }
