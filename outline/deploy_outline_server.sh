@@ -244,16 +244,8 @@ jq --arg ip "$SERVER_IP" --arg port "$API_PORT" '.apiUrl = "https://" + $ip + ":
   exit 1
 }
 
-# Step 9: Check for port conflicts
-echo "Checking for port conflicts..."
-for port in "${DOCKER_PORT}" "${API_PORT}"; do
-  if sudo netstat -tuln | grep ":${port}" > /dev/null; then
-    echo "Error: Port ${port} is already in use."
-    sudo netstat -tulnp | grep ":${port}" > "${FILES_DIR}/port_conflict.txt" 2>&1
-    cat "${FILES_DIR}/port_conflict.txt"
-    exit 1
-  fi
-done
+
+# Step 9: Check for existing container and stop/remove if found
 
 # Function to prompt user for confirmation
 prompt_for_container_deletion() {
@@ -268,7 +260,6 @@ prompt_for_container_deletion() {
   esac
 }
 
-# Step 10: Check for existing container and stop/remove if found
 echo "Checking for existing Outline Server container..."
 if sudo docker ps -a --filter "name=^${OUTLINE_CONTAINER_NAME}$" --format '{{.Names}}' | grep -q "${OUTLINE_CONTAINER_NAME}"; then
   echo "Existing container found with name ${OUTLINE_CONTAINER_NAME}."
@@ -289,6 +280,18 @@ if sudo docker ps -a --filter "name=^${OUTLINE_CONTAINER_NAME}$" --format '{{.Na
     exit 1
   }
 fi
+
+# Step 10: Check for port conflicts
+echo "Checking for port conflicts..."
+for port in "${DOCKER_PORT}" "${API_PORT}"; do
+  if sudo netstat -tuln | grep ":${port}" > /dev/null; then
+    echo "Error: Port ${port} is already in use."
+    sudo netstat -tulnp | grep ":${port}" > "${FILES_DIR}/port_conflict.txt" 2>&1
+    cat "${FILES_DIR}/port_conflict.txt"
+    exit 1
+  fi
+done
+
 
 # Step 11: Run Outline Server container
 echo "Starting Outline Server container..."
