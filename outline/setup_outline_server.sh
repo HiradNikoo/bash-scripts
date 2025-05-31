@@ -591,3 +591,115 @@ echo "Use ${ACCESS_FILE} to connect Outline Manager to the server."
 echo "After releasing you can setup vpn in the second server by running: sudo bash -c \"\$(wget -qO- https://bash.hiradnikoo.com/outline/bootstrap-deploy.sh)\""
 echo "On the second server (serverB), run the following command to fetch and execute bootstrap-deploy.sh:"
 echo "wget -O bootstrap-deploy.sh https://bash.hiradnikoo.com/outline/bootstrap-deploy.sh && chmod +x bootstrap-deploy.sh && sudo ./bootstrap-deploy.sh"
+
+# Step 12: Keep Outline VPN container alive for testing
+echo "Starting Outline VPN container for testing..."
+# Remove existing container if it exists
+if sudo docker ps -a --filter "name=^${OUTLINE_CONTAINER_NAME}$" --format '{{.Names}}' | grep -q "${OUTLINE_CONTAINER_NAME}"; then
+  echo "Removing existing container ${OUTLINE_CONTAINER_NAME}..."
+  sudo docker rm -f "${OUTLINE_CONTAINER_NAME}" || {
+    echo "Error: Failed to remove existing container."
+    exit 1
+  }
+fi
+
+# Run Outline container in detached mode for testing
+echo "Running Outline VPN container in detached mode..."
+CERT_ENV=""
+[ -f "${KEY_FILE}" ] && CERT_ENV="-e SB_PRIVATE_KEY_FILE=/opt/outline/shadowbox.key -v ${KEY_FILE}:/opt/outline/shadowbox.key"
+sudo docker run -d --name "${OUTLINE_CONTAINER_NAME}" \
+  -p "${DOCKER_PORT}:${DOCKER_PORT}" \
+  -p "${API_PORT}:${API_PORT}" \
+  -v "${CONFIG_FILE}:/opt/outline/shadowbox_config.json" \
+  -v "${PERSISTED_STATE_DIR}:/root/shadowbox/persisted-state" \
+  -v "${CERT_FILE}:/opt/outline/shadowbox.crt" \
+  -e "SB_CERTIFICATE_FILE=/opt/outline/shadowbox.crt" \
+  ${CERT_ENV} \
+  "${OUTLINE_IMAGE}" || {
+  echo "Error: Failed to start Outline container for testing."
+  exit 1
+}
+
+# Wait for container to start
+echo "Waiting for Outline container to start..."
+for i in {1..60}; do
+  if sudo docker ps --filter "name=^${OUTLINE_CONTAINER_NAME}$" --filter "status=running" --format '{{.Names}}' | grep -q "${OUTLINE_CONTAINER_NAME}"; then
+    echo "Outline container is running."
+    break
+  fi
+  if [ "$i" -eq 60 ]; then
+    echo "Error: Outline container failed to start within 60 seconds."
+    sudo docker logs "${OUTLINE_CONTAINER_NAME}" > "${LOG_FILE}"
+    cat "${LOG_FILE}"
+    sudo docker rm -f "${OUTLINE_CONTAINER_NAME}"
+    exit 1
+  fi
+  sleep 1
+done
+
+# Generate an access key via the management API
+echo "Generating an access key for testing..."
+sleep 10  # Wait for API to initialize
+ACCESS_KEY_RESPONSE=$(curl -s -X POST --connect-timeout 5 --max-time 10 -k "https://${PUBLIC_IP}:${API_PORT}/${API_PREFIX}/access-keys" || echo "curl_failed")
+if [ "$ACCESS_KEY_RESPONSE" = "curl_failed" ]; then
+  echo "Error: Failed to generate access key."
+  curl -v --connect-timeout 5 --max-time 10 -k "https://${PUBLIC_IP}:${API_PORT}/${API_PREFIX}/access-keys" > "${FILES_DIR}/curl_access_key_output.txt" 2>&1
+  cat "${FILES_DIR}/curl_access_key_output.txt"
+  echo "Container logs saved to ${LOG_FILE}"
+  sudo docker logs "${OUTLINE_CONTAINER_NAME}" > "${LOG_FILE}"
+  cat "${LOG_FILE}"
+  exit 1
+fi
+
+# Extract access key details
+ACCESS_KEY=$(echo "${ACCESS_KEY_RESPONSE}" | grep -o '"accessUrl":"[^"]*"' | cut -d'"' -f4)
+if [ -z "$ACCESS_KEY" ]; then
+  echo "Error: Failed to extract access key from response."
+  echo "API Response: ${ACCESS_KEY_RESPONSE}"
+  echo "Container logs saved to ${LOG_FILE}"
+  sudo docker logs "${OUTLINE_CONTAINER_NAME}" > "${LOG_FILE}"
+  cat "${LOG_FILE}"
+  exit 1
+fi
+echo "Access key generated: ${ACCESS_KEY}"
+
+# Save access key to a file for user reference
+echo "Saving access key to ${FILES_DIR}/test_access_key.txt..."
+echo "${ACCESS_KEY}" > "${FILES_DIR}/test_access_key.txt"
+sudo chown $(whoami):$(whoami) "${FILES_DIR}/test_access_key.txt"
+sudo chmod 600 "${FILES_DIR}/test_access_key.txt"
+echo "Access key saved to ${FILES_DIR}/test_access_key.txt"
+
+# Output configuration for Outline Manager
+echo "Outline VPN configuration for Outline Manager:"
+cat "${ACCESS_FILE}"
+echo "Use the above configuration in Outline Manager to connect to the server."
+
+# Instructions for user testing
+echo "Instructions for testing Outline VPN:"
+echo "1. Install Outline Manager from https://getoutline.org/en/get-started/#step-1 on your computer."
+echo "2. Open Outline Manager and select 'Add a new server'."
+echo "3. Choose 'Add server manually' and enter the following details from ${ACCESS_FILE}:"
+echo "   - API URL: https://${PUBLIC_IP}:${API_PORT}/${API_PREFIX}"
+echo "   - Certificate SHA256: ${CERT_SHA256}"
+echo "4. Once the server is added, create a new access key in Outline Manager or use the one in ${FILES_DIR}/test_access_key.txt:"
+echo "   - Access Key: ${ACCESS_KEY}"
+echo "5. Install Outline Client from https://getoutline.org/en/get-started/#step-2 on your device."
+echo "6. In Outline Client, add the access key from step 4 and connect to the VPN."
+echo "7. Test internet access through the VPN (e.g., visit https://www.whatismyip.com to verify your IP)."
+echo "8. To stop the container after testing, run: sudo docker stop ${OUTLINE_CONTAINER_NAME} && sudo docker rm ${OUTLINE_CONTAINER_NAME}"
+
+# Keep container running
+echo "Outline VPN container is running for testing. It will remain active until manually stopped."
+echo "To inspect logs: sudo docker logs ${OUTLINE_CONTAINER_NAME}"
+echo "To access the container: sudo docker exec -it ${OUTLINE_CONTAINER_NAME} /bin/sh"
+echo "To stop the container: sudo docker stop ${OUTLINE_CONTAINER_NAME} && sudo docker rm ${OUTLINE_CONTAINER_NAME}"
+echo "Press Ctrl+C to exit this script (container will continue running)."
+
+# Trap to ensure container isn't stopped on script exit
+trap '' EXIT
+
+# Keep script running to allow user interaction
+while true; do
+  sleep 3600  # Sleep for 1 hour, keeping script alive
+done
