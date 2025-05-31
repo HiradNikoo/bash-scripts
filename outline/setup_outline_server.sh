@@ -248,8 +248,6 @@ if [ "$CONFIG_GENERATED" = false ]; then
 {
   "apiUrl": "https://${PUBLIC_IP}:${API_PORT}/${API_PREFIX}",
   "certSha256": "placeholder-cert-sha256",
-  "hostname": "$(hostname)",
-  "port": ${API_PORT}
 }
 EOF
   echo "Default configuration created."
@@ -578,6 +576,8 @@ if [ ! -f "${ZIP_OUTPUT}" ]; then
   exit 1
 fi
 echo "Zip file created successfully: ${ZIP_OUTPUT}"
+
+cat "${CONFIG_FILE}"
 
 # Step 11: Clean up
 echo "Cleaning up temporary files..."
