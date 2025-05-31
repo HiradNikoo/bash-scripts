@@ -385,7 +385,7 @@ echo "Outline VPN management API is functional."
 
 echo "Configuration and access details:"
 echo "Server IP: ${SERVER_IP}"
-cat "${FILES_DIR}/config"
+cat "${FILES_DIR}/config/shadowbox_config.json"
 
 # Step 17: Clean up
 echo "Cleaning up temporary files..."
