@@ -255,11 +255,27 @@ for port in "${DOCKER_PORT}" "${API_PORT}"; do
   fi
 done
 
-# Step 10: Check for existing container and remove if found
+# Function to prompt user for confirmation
+prompt_for_container_deletion() {
+  read -p "Existing container '${OUTLINE_CONTAINER_NAME}' found. Delete it? (y/N): " response
+  case "$response" in
+    [yY][eE][sS]|[yY])
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
 # Step 10: Check for existing container and stop/remove if found
 echo "Checking for existing Outline Server container..."
 if sudo docker ps -a --filter "name=^${OUTLINE_CONTAINER_NAME}$" --format '{{.Names}}' | grep -q "${OUTLINE_CONTAINER_NAME}"; then
   echo "Existing container found with name ${OUTLINE_CONTAINER_NAME}."
+  if ! prompt_for_container_deletion; then
+    echo "User declined to delete existing container. Exiting."
+    exit 0
+  fi
   if sudo docker ps --filter "name=^${OUTLINE_CONTAINER_NAME}$" --filter "status=running" --format '{{.Names}}' | grep -q "${OUTLINE_CONTAINER_NAME}"; then
     echo "Container is running. Stopping it..."
     sudo docker stop "${OUTLINE_CONTAINER_NAME}" || {
